@@ -21,6 +21,7 @@ import itertools
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 from scipy.stats import binom  # type: ignore
 
@@ -118,7 +119,23 @@ def main() -> None:
             write_alignment_html(motif, genotype, phasing, script_dir, args.output_dir, args.cutoff_alignments)
 
         print(f'Writing html report: {datetime.now():%Y-%m-%d %H:%M:%S}')
-        write_report(all_motifs, all_annotations, all_genotypes, all_haplotypes, script_dir, args.output_dir)
+        data, data_v2 = get_data(all_motifs, all_annotations, all_genotypes, all_haplotypes, args.output_dir)
+
+        json_dump = json.dumps(data)
+        with open(f"{args.output_dir}/data.json", "w") as f:
+            f.write(json_dump)
+
+        data_json = store_json(data_v2)
+        create_histograms(data_json, args.output_dir)
+        json_example = json.dumps(data_json, indent=2)
+        with open(f"{args.output_dir}/data_v2.json", "w") as f:
+            f.write(json_example)
+
+        env = Environment(loader=FileSystemLoader([script_dir]), trim_blocks=True, lstrip_blocks=True)
+        template = env.get_template("report_template.html")
+        output = template.render(data=data)
+        with open(f"{args.output_dir}/report.html", "w") as f:
+            f.write(output)
 
         copy_includes(args.output_dir)
 
@@ -137,6 +154,48 @@ def copy_includes(output_dir: str) -> None:
     shutil.copy2(f'{include_dir}/styles.css',               f'{output_dir}/includes/styles.css')
     shutil.copy2(f'{include_dir}/w3.css',                   f'{output_dir}/includes/w3.css')
     shutil.copy2(f'{include_dir}/jquery.dataTables.css',    f'{output_dir}/includes/jquery.dataTables.css')
+
+
+def create_histograms(data: dict, output_dir: str) -> None:
+    os.makedirs(f"{output_dir}/plots", exist_ok=True)
+    for motif in data["motifs"]:
+        motif_id = motif["motif_id"]
+        for i, module in enumerate(motif["modules"]):
+            if module["graph_data"][0] is None:
+                continue
+            output_file = f"{output_dir}/plots/{motif_id}_{i}_histogram.png"
+            title = f"Histogram of read annotations for {motif_id}-{i}"
+            spanning, flanking, _ = module["graph_data"][0]
+
+            total = [x + y for x, y in zip(spanning, flanking)]
+            n = max(i for i, v in enumerate(total) if v != 0)
+            n = min(n + 2, len(total))
+            x = np.arange(n)
+
+            fig, ax = plt.subplots()
+            ax.bar(x, total[:n], width=0.9, label="Flanking", color='lightgrey')
+            for i, height in enumerate(total[:n]):
+                if flanking[i] > 0:
+                    ax.text(x[i], height, str(flanking[i]), ha='center', va='bottom', color='lightgrey')
+
+            ax.bar(x, spanning[:n], width=0.9, label="Spanning", color='C0')
+            for i, height in enumerate(spanning[:n]):
+                if height > 0:
+                    ax.text(x[i], height, str(height), ha='center', va='bottom', color='C0')
+
+            ax.set_ylim(top=max(total[:n]) + 2)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+
+            nonzero_indices = [i for i, v in enumerate(total[:n]) if v > 0]
+            ax.set_xticks(nonzero_indices)
+            ax.set_xticklabels([str(i) for i in nonzero_indices])
+            ax.set_title(title)
+
+            ax.legend()
+            plt.savefig(output_file)
+            plt.close()
+    return
 
 
 def write_alignment_html(
@@ -505,11 +564,12 @@ def generate_locus_data2(ph, motif, seq, post_filter, motif_dir, nomenclature_li
     return locus_data2
 
 
-def write_report(
+def get_data(
     all_motifs: list[Motif], all_annotations: list[list[Annotation]],
     all_genotypes: list[list[GenotypeInfo]], all_haplotypes: list[list[None | tuple]],
-    script_dir: str, output_dir: str, nomenclature_limit: int = 5
-) -> None:
+    output_dir: str,  # TODO: remove this
+    nomenclature_limit: int = 5
+) -> tuple:
     post_filter = PostFilter()
     post_bases = post_filter.min_rep_len
     post_reps = post_filter.min_rep_cnt
@@ -559,28 +619,14 @@ def write_report(
     sample = os.path.basename(os.path.normpath(output_dir))
     version = VERSION
     tabs = sorted(tabs, key=lambda x: x[0])
+
     data = (sample, version, postfilter_data, tabs)
-
-    # data_tmp = (sample, version, postfilter_data, tabs[0:1] + tabs[11:12])
-    # store_json(data_tmp, f"{output_dir}/instance.json")
-
-    json_dump = json.dumps(data)
-    with open(f"{output_dir}/data.json", "w") as f:
-        f.write(json_dump)
-
     data2 = (sample, version, postfilter_data, tabs2)
-    store_json(data2, f"{output_dir}/data_v2.json")
 
-    env = Environment(loader=FileSystemLoader([script_dir]), trim_blocks=True, lstrip_blocks=True)
-    template = env.get_template("report_template.html")
-    output = template.render(data=data)
-    with open(f"{output_dir}/report.html", "w") as f:
-        f.write(output)
-
-    return
+    return (data, data2)
 
 
-def store_json(old_data: tuple, output_file: str):
+def store_json(old_data: tuple) -> dict:
     data = {}
     data["sample"] = old_data[0]
     data["dante_version"] = old_data[1]
@@ -654,10 +700,7 @@ def store_json(old_data: tuple, output_file: str):
         motif["phasings"] = modules
         motifs.append(motif)
     data["motifs"] = motifs
-
-    json_example = json.dumps(data, indent=2)
-    with open(output_file, "w") as f:
-        f.write(json_example)
+    return data
 
 
 def generate_nomenclatures(
@@ -2092,7 +2135,8 @@ class Inference:
     """ Class for inference of alleles. """
     MIN_REPETITIONS = 1
     # default parameters for inference (miSeq default)
-    DEFAULT_MODEL_PARAMS = (0.00716322, 0.000105087, 0.0210812, 0.0001648)
+    # DEFAULT_MODEL_PARAMS = (0.00716322, 0.000105087, 0.0210812, 0.0001648)
+    DEFAULT_MODEL_PARAMS = (0.00716322, 0.000105087, 0.0210812, 0.00716322)  # it actually changes things
     DEFAULT_FIT_FUNCTION = 'linear'
 
     # TODO: type the members
