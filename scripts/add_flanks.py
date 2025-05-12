@@ -60,4 +60,4 @@ for line in lines:
     # print(" " * slop + hgvs_motif)
     # print()
 
-    print(locus_id, left_flank, str(hgvs_rec), right_flank, sep="\t")
+    print(locus_id, str(hgvs_rec), left_flank, right_flank, sep="\t")
