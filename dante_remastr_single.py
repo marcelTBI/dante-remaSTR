@@ -78,6 +78,7 @@ def main() -> None:
     # phased_sequences = get_phased_sequence(motif, genotypes, haplotypes)
     data, data_v2 = get_data(motif, annotations, genotypes, haplotypes, args.output_dir)
     data_json = store_json(data_v2)
+    # del motif, annotations, genotypes, haplotypes, data, data_v2
 
     # -------------------------------------------------------------------------
     # del motif, annotations, genotypes, haplotypes, phased_sequences, data, data_v2
@@ -94,6 +95,14 @@ def main() -> None:
     with open(f"{args.output_dir}/data.json", "w") as f:
         f.write(json_dump)
 
+    print(f'Writing html report: {datetime.now():%Y-%m-%d %H:%M:%S}')
+    script_dir = os.path.dirname(sys.argv[0]) + "/templates"
+    env = Environment(loader=FileSystemLoader([script_dir]), trim_blocks=True, lstrip_blocks=True)
+    template = env.get_template("report_template.html")
+    output = template.render(data=data)
+    with open(f"{args.output_dir}/report.html", "w") as f:
+        f.write(output)
+
     print(f"Dumping data_v2.json: {datetime.now():%Y-%m-%d %H:%M:%S}")
     json_example = json.dumps(data_json, indent=2)
     with open(f"{args.output_dir}/data_v2.json", "w") as f:
@@ -102,17 +111,8 @@ def main() -> None:
     print(f"Creating histogram plots: {datetime.now():%Y-%m-%d %H:%M:%S}")
     create_histograms(data_json, args.output_dir)
 
-    script_dir = os.path.dirname(sys.argv[0]) + "/templates"
-
     print(f'Writing alignment htmls: {datetime.now():%Y-%m-%d %H:%M:%S}')
-    write_alignment_html(motif, genotypes, haplotypes, script_dir, args.output_dir, args.cutoff_alignments, args.input_tsv, args.male)
-
-    print(f'Writing html report: {datetime.now():%Y-%m-%d %H:%M:%S}')
-    env = Environment(loader=FileSystemLoader([script_dir]), trim_blocks=True, lstrip_blocks=True)
-    template = env.get_template("report_template.html")
-    output = template.render(data=data)
-    with open(f"{args.output_dir}/report.html", "w") as f:
-        f.write(output)
+    write_alignment_html(data_json, args.input_tsv, args.male, args.cutoff_alignments, args.output_dir)
 
     print(f'Copying includes: {datetime.now():%Y-%m-%d %H:%M:%S}')
     copy_includes(args.output_dir)
@@ -183,16 +183,24 @@ def create_histograms(data: dict, output_dir: str) -> None:
     return
 
 
-def write_alignment_html(
-    motif: Motif, genotype: list[GenotypeInfo], phasing: list[None | tuple],
-    script_dir: str, output_dir: str, flank_size: int, input_tsv: str, male: bool
-) -> None:
+def write_alignment_html(data_json, input_tsv, male, cutoff_alignments, output_dir) -> None:
+    script_dir = os.path.dirname(sys.argv[0]) + "/templates"
+    min_gt = []
+    for mod in data_json["motifs"][0]["modules"]:
+        min_gt.append((mod["id"][0], (mod["allele_1"][0], mod["allele_2"][0])))
+
+    min_ph = []
+    for phasing in data_json["motifs"][0]["phasings"]:
+        min_ph.append((phasing["ids"][1], phasing["ids"][0]))
+
+    motif = create_motif(pd.read_csv(input_tsv, sep='\t'), male)
+
     seq = motif.modules_str(include_flanks=True)
     motif_desc = motif.name
 
     data2 = []
-    for gt in genotype:
-        (module_number, _, _, _, predicted, _, _, _) = gt
+    for gt in min_gt:
+        (module_number, predicted) = gt
 
         suffix = str(module_number)
         highlight = list(map(int, str(module_number).split('_')))
@@ -211,47 +219,45 @@ def write_alignment_html(
         if a1 is not None and a1 > 0:
             name = f'{motif_clean}_{str(a1)}'
             display_text = f'Allele 1 ({str(a1):2s}) alignment visualization'
-            fasta2 = generate_msa_fasta(input_tsv, "spanning", male, module_number, a1, cutoff_after=flank_size)
+            fasta2 = generate_msa_fasta(input_tsv, "spanning", male, module_number, a1, cutoff_after=cutoff_alignments)
             seq_logo = 'true'
             data.append((name, display_text, fasta2, seq_logo))
 
         if a2 is not None and a2 != a1 and a2 != 0:
             name = f'{motif_clean}_{str(a2)}'
             display_text = f'Allele 2 ({str(a2):2s}) alignment visualization'
-            fasta2 = generate_msa_fasta(input_tsv, "spanning", male, module_number, a2, cutoff_after=flank_size)
+            fasta2 = generate_msa_fasta(input_tsv, "spanning", male, module_number, a2, cutoff_after=cutoff_alignments)
             seq_logo = 'true'
             data.append((name, display_text, fasta2, seq_logo))
 
         name = motif_clean
         display_text = 'Spanning reads alignment visualization'
-        fasta2 = generate_msa_fasta(input_tsv, "spanning", male, module_number, index_rep2=None, cutoff_after=flank_size)
+        fasta2 = generate_msa_fasta(input_tsv, "spanning", male, module_number, index_rep2=None, cutoff_after=cutoff_alignments)
         seq_logo = 'true'
         data.append((name, display_text, fasta2, seq_logo))
 
         name = motif_clean + '_filtered'
         display_text = 'Partial reads alignment visualization'
-        fasta2 = generate_msa_fasta(input_tsv, "flanking", male, module_number, index_rep2=None, cutoff_after=flank_size)
+        fasta2 = generate_msa_fasta(input_tsv, "flanking", male, module_number, index_rep2=None, cutoff_after=cutoff_alignments)
         seq_logo = 'false'
         data.append((name, display_text, fasta2, seq_logo))
 
         name = motif_clean + '_filtered_left'
         display_text = 'Left flank reads alignment visualization'
-        fasta2 = generate_msa_fasta(input_tsv, "flanking_left", male, module_number, index_rep2=None, cutoff_after=flank_size)
+        fasta2 = generate_msa_fasta(input_tsv, "flanking_left", male, module_number, index_rep2=None, cutoff_after=cutoff_alignments)
         seq_logo = 'true'
         data.append((name, display_text, fasta2, seq_logo))
 
         name = motif_clean + '_filtered_right'
         display_text = 'Right flank reads alignment visualization'
-        fasta2 = generate_msa_fasta(input_tsv, "flanking_right", male, module_number, index_rep2=None, cutoff_after=flank_size, right_align=True)
+        fasta2 = generate_msa_fasta(input_tsv, "flanking_right", male, module_number, index_rep2=None, cutoff_after=cutoff_alignments, right_align=True)
         seq_logo = 'true'
         data.append((name, display_text, fasta2, seq_logo))
 
         data2.append((sequence, motif_id, data))
 
-    for ph in phasing[1:]:  # first phasing is None
-        if ph is None:
-            raise ValueError
-        (module_number, _, _, _, _, _, prev_module_num) = ph
+    for ph in min_ph:
+        (module_number, prev_module_num) = ph
 
         suffix = f'{prev_module_num}_{module_number}'
 
@@ -267,25 +273,25 @@ def write_alignment_html(
 
         name = motif_clean
         display_text = 'Spanning reads alignment visualization'
-        fasta2 = generate_msa_fasta(input_tsv, "two_good", male, prev_module_num, index_rep2=module_number, cutoff_after=flank_size)
+        fasta2 = generate_msa_fasta(input_tsv, "two_good", male, prev_module_num, index_rep2=module_number, cutoff_after=cutoff_alignments)
         seq_logo = 'true'
         data.append((name, display_text, fasta2, seq_logo))
 
         name = motif_clean + '_filtered'
         display_text = 'Partial reads alignment visualization'
-        fasta2 = generate_msa_fasta(input_tsv, "one_good", male, prev_module_num, index_rep2=module_number, cutoff_after=flank_size)
+        fasta2 = generate_msa_fasta(input_tsv, "one_good", male, prev_module_num, index_rep2=module_number, cutoff_after=cutoff_alignments)
         seq_logo = 'true'
         data.append((name, display_text, fasta2, seq_logo))
 
         name = motif_clean + '_filtered_left'
         display_text = 'Left flank reads alignment visualization'
-        fasta2 = generate_msa_fasta(input_tsv, "one_good_left", male, prev_module_num, index_rep2=module_number, cutoff_after=flank_size)
+        fasta2 = generate_msa_fasta(input_tsv, "one_good_left", male, prev_module_num, index_rep2=module_number, cutoff_after=cutoff_alignments)
         seq_logo = 'true'
         data.append((name, display_text, fasta2, seq_logo))
 
         name = motif_clean + '_filtered_right'
         display_text = 'Right flank reads alignment visualization'
-        fasta2 = generate_msa_fasta(input_tsv, "one_good_right", male, prev_module_num, index_rep2=module_number, cutoff_after=flank_size, right_align=True)
+        fasta2 = generate_msa_fasta(input_tsv, "one_good_right", male, prev_module_num, index_rep2=module_number, cutoff_after=cutoff_alignments, right_align=True)
         seq_logo = 'true'
         data.append((name, display_text, fasta2, seq_logo))
 
@@ -484,14 +490,14 @@ def generate_locus_data(gt: GenotypeInfo, motif, nomenclature_limit, motif_id, p
     row_tuple = generate_row(seq, row, post_filter)
 
     tmp = generate_motifb64(seq, row)
-    (locus_id, _, _, _, _, sequence) = tmp
+    (locus_id, highlight, _, _, _, _, sequence) = tmp
     del row
 
     graph_data = (read_counts, heatmap_data, None)
 
     _, _, a1_prediction, a1_confidence, a1_reads, a1_indels, a1_mismatches, a2_prediction, a2_confidence, a2_reads, a2_indels, a2_mismatches, confidence, indels, mismatches, spanning_reads, flanking_reads = row_tuple
     locus_data = (
-        locus_id, sequence, locus_nomenclatures,
+        locus_id, highlight, sequence, locus_nomenclatures,
         (a1_prediction, a1_confidence, a1_indels, a1_mismatches, a1_reads),
         (a2_prediction, a2_confidence, a2_indels, a2_mismatches, a2_reads),
         (confidence, indels, mismatches),
@@ -514,7 +520,7 @@ def generate_locus_data2(ph, motif, seq, post_filter, motif_dir, nomenclature_li
     row_tuple = generate_row(seq, row, post_filter)
 
     tmp = generate_motifb64(seq, row)
-    (locus_id, _, _, _, _, sequence) = tmp
+    (locus_id, highlight, _, _, _, _, sequence) = tmp
 
     annotations = anns_2good + anns_1good
     if len(annotations) == 0:
@@ -527,7 +533,7 @@ def generate_locus_data2(ph, motif, seq, post_filter, motif_dir, nomenclature_li
 
     _, _, a1_prediction, a1_confidence, a1_reads, a1_indels, a1_mismatches, a2_prediction, a2_confidence, a2_reads, a2_indels, a2_mismatches, confidence, indels, mismatches, spanning_reads, flanking_reads = row_tuple
     locus_data2 = (
-        locus_id, sequence, locus_nomenclatures,
+        locus_id, highlight, sequence, locus_nomenclatures,
         (a1_prediction, a1_confidence, a1_indels, a1_mismatches, a1_reads),
         (a2_prediction, a2_confidence, a2_indels, a2_mismatches, a2_reads),
         (confidence, indels, mismatches),
@@ -628,10 +634,11 @@ def store_json(old_data: tuple) -> dict:
         for old_module in old_motif[4]:
             module = {}
             module["module_id"] = old_module[0]
-            module["sequence"] = old_module[1]
+            module["id"] = old_module[1]
+            module["sequence"] = old_module[2]
 
             nomenclatures = []
-            for old_nomenclature in old_module[2]:
+            for old_nomenclature in old_module[3]:
                 nomenclature = {}
                 nomenclature["count"] = old_nomenclature[0]
                 nomenclature["location"] = old_nomenclature[1]
@@ -639,12 +646,12 @@ def store_json(old_data: tuple) -> dict:
                 nomenclatures.append(nomenclature)
             module["nomenclatures"] = nomenclatures
 
-            module["allele_1"] = old_module[3]
-            module["allele_2"] = old_module[4]
-            module["stats"] = old_module[5]
-            module["reads_spanning"] = old_module[6]
-            module["reads_flanking"] = old_module[7]
-            module["graph_data"] = old_module[8]
+            module["allele_1"] = old_module[4]
+            module["allele_2"] = old_module[5]
+            module["stats"] = old_module[6]
+            module["reads_spanning"] = old_module[7]
+            module["reads_flanking"] = old_module[8]
+            module["graph_data"] = old_module[9]
             modules.append(module)
 
         motif["modules"] = modules
@@ -653,10 +660,11 @@ def store_json(old_data: tuple) -> dict:
         for old_phasing in old_motif[5]:
             module = {}
             module["phasing_id"] = old_phasing[0]
-            module["sequence"] = old_phasing[1]
+            module["ids"] = old_phasing[1]
+            module["sequence"] = old_phasing[2]
 
             nomenclatures = []
-            for old_nomenclature in old_phasing[2]:
+            for old_nomenclature in old_phasing[3]:
                 nomenclature = {}
                 nomenclature["count"] = old_nomenclature[0]
                 nomenclature["location"] = old_nomenclature[1]
@@ -664,12 +672,12 @@ def store_json(old_data: tuple) -> dict:
                 nomenclatures.append(nomenclature)
             module["nomenclatures"] = nomenclatures
 
-            module["allele_1"] = old_phasing[3]
-            module["allele_2"] = old_phasing[4]
-            module["stats"] = old_phasing[5]
-            module["reads_spanning"] = old_phasing[6]
-            module["reads_flanking"] = old_phasing[7]
-            module["graph_data"] = old_phasing[8]
+            module["allele_1"] = old_phasing[4]
+            module["allele_2"] = old_phasing[5]
+            module["stats"] = old_phasing[6]
+            module["reads_spanning"] = old_phasing[7]
+            module["reads_flanking"] = old_phasing[8]
+            module["graph_data"] = old_phasing[9]
             modules.append(module)
 
         motif["phasings"] = modules
@@ -2763,6 +2771,7 @@ def generate_row(sequence: str, result: dict, postfilter: PostFilter) -> tuple:
 
 def generate_motifb64(seq: str, row: dict) -> tuple:
     highlight = list(map(int, str(row['repetition_index']).split('_')))
+    # print(f"{highlight=}") -> [1, 2]
     sequence, _ = highlight_subpart(seq, highlight)
     motif_name = row['motif_name']
     motif_name_part1 = f'{motif_name.replace("/", "_")}'
@@ -2771,6 +2780,7 @@ def generate_motifb64(seq: str, row: dict) -> tuple:
     motif_clean = re.sub(r'[^\w_]', '', motif_name_long)
     motif_id = motif_clean.rsplit('_', 1)[0]
     motif_clean_id = motif_id if highlight == [1] else motif_clean  # trick to solve static html
+    # motif_clean_id sucks... and unfortunatelly it is used as module_id in json
 
     a1 = row['allele1']
     a2 = row['allele2']
@@ -2784,7 +2794,7 @@ def generate_motifb64(seq: str, row: dict) -> tuple:
 
     alignment = f"{motif_name}/alignments.html"
 
-    return (motif_clean_id, motif_id, motif_name, result, alignment, sequence)
+    return (motif_clean_id, highlight, motif_id, motif_name, result, alignment, sequence)
 
 
 Confidences: TypeAlias = tuple[float, float, float, float, float, float, float]
