@@ -79,6 +79,7 @@ def main() -> None:
     data, data_v2 = get_data(motif, annotations, genotypes, haplotypes, args.output_dir)
     data_json = store_json(data_v2)
     # del motif, annotations, genotypes, haplotypes, data, data_v2
+    del annotations, data, data_v2
 
     # -------------------------------------------------------------------------
     # del motif, annotations, genotypes, haplotypes, phased_sequences, data, data_v2
@@ -90,16 +91,11 @@ def main() -> None:
     # print(f'Writing phased predictions: {datetime.now():%Y-%m-%d %H:%M:%S}')
     # write_phased_predictions(phased_sequences, args.output_dir + "/phased_predictions.tsv")
 
-    print(f"Dumping data.json: {datetime.now():%Y-%m-%d %H:%M:%S}")
-    json_dump = json.dumps(data)
-    with open(f"{args.output_dir}/data.json", "w") as f:
-        f.write(json_dump)
-
     print(f'Writing html report: {datetime.now():%Y-%m-%d %H:%M:%S}')
     script_dir = os.path.dirname(sys.argv[0]) + "/templates"
     env = Environment(loader=FileSystemLoader([script_dir]), trim_blocks=True, lstrip_blocks=True)
-    template = env.get_template("report_template.html")
-    output = template.render(data=data)
+    template = env.get_template("report_template2.html")
+    output = template.render(data=data_json)
     with open(f"{args.output_dir}/report.html", "w") as f:
         f.write(output)
 
@@ -659,7 +655,7 @@ def store_json(old_data: tuple) -> dict:
         modules = []
         for old_phasing in old_motif[5]:
             module = {}
-            module["phasing_id"] = old_phasing[0]
+            module["module_id"] = old_phasing[0]
             module["ids"] = old_phasing[1]
             module["sequence"] = old_phasing[2]
 

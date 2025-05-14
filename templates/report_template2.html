@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Dante report</title>
+    <script src="./includes/plotly-2.14.0.min.js"></script>
+    <script src="./includes/jquery-3.6.1.min.js"></script>
+    <script src="./includes/datatables.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="./includes/jquery.dataTables.css">
+    <link rel="stylesheet" type="text/css" href="./includes/w3.css">
+    <link rel="stylesheet" type="text/css" href="./includes/styles.css">
+</head>
+
+<body class="valo v-app">
+
+{% set post_bases, post_reps, errors = data["postfilter_params"] %}
+<div id="sample_name" style="display: none">{{ data["sample"] }}</div>
+
+<h2 id="content">Content (Sample: {{ data["sample"] }} Version: Remastr v{{ data["dante_version"] }})</h2>
+<div class="tab">
+    <table class="tg" id="content-tg" style="width: 100%">
+        <thead>
+            <tr>
+                <th class="tg-s6z2">Motif</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for motif in data["motifs"] %}
+            <tr>
+                <td class="tg-s6z2">
+                    <a href="#{{ motif["motif_id"] }}" class="tablinks" onclick="openTab(event, '{{ motif["motif_id"] }}'); $('.{{ motif["motif_id"] }}').trigger('content-change');">{{ motif["motif_id"] }}</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <script>
+        $(document).ready( function () { {
+        $('#content-tg').DataTable();
+    } } );
+    </script>
+</div>
+
+
+{% for motif in data["motifs"] %}
+<div class="tabcontent" id="{{ motif["motif_id"] }}" style="display: none">
+<h2 class="summary_nomenclatures">Nomenclatures</h2>
+<table class="nomtg">
+    <tbody>
+        {% for nomenclature in motif["nomenclatures"] %}
+        <tr>
+            <td>{{ nomenclature["count"] }}x</td>
+            <td>{{ nomenclature["ref"] }}</td>
+            {%+ for part in nomenclature["noms"] %}<td>{{ part }}</td>{% endfor %}
+
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+<h2 class="summary">Summary table</h2>
+<table class="tg" id="tg-{{ motif["motif_id"] }}" style="width: 100%">
+    <thead>
+        <tr>
+            <th class="tg-s6z2" rowspan="3">Motif</th>
+            <th class="tg-s6z2" rowspan="3">Sequence</th>
+            <th class="tg-s6z2" colspan="5">Allele 1</th>
+            <th class="tg-s6z2" colspan="5">Allele 2</th>
+            <th class="tg-s6z2" rowspan="3">Overall<br>confidence</th>
+            <th class="tg-s6z2" colspan="2">Errors per read</th>
+            <th class="tg-s6z2" colspan="2">Reads</th>
+        </tr>
+        <tr>
+            <td class="tg-smaller" rowspan="2">prediction</td>
+            <td class="tg-smaller" rowspan="2">confidence</td>
+            <td class="tg-smaller" rowspan="2">reads</td>
+            <td class="tg-smaller" colspan="2">Errors per read</td>
+            <td class="tg-smaller" rowspan="2">prediction</td>
+            <td class="tg-smaller" rowspan="2">confidence</td>
+            <td class="tg-smaller" rowspan="2">reads</td>
+            <td class="tg-smaller" colspan="2">Errors per read</td>
+            <td class="tg-smaller" rowspan="2">indel</td>
+            <td class="tg-smaller" rowspan="2">mismatch</td>
+            <td class="tg-smaller" rowspan="2">full</td>
+            <td class="tg-smaller" rowspan="2">partial</td>
+        </tr>
+        <tr>
+            <td class="tg-smaller">indel</td>
+            <td class="tg-smaller">mismatch</td>
+            <td class="tg-smaller">indel</td>
+            <td class="tg-smaller">mismatch</td>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in motif["modules"] + motif["phasings"] %}
+        {% set allele1, conf_allele1, indels_a1, mismatches_a1, reads_a1 = row["allele_1"] %}
+        {% set allele2, conf_allele2, indels_a2, mismatches_a2, reads_a2 = row["allele_2"] %}
+        {% set confidence, indels, mismatches = row["stats"] %}
+        <tr>
+            <td class="tg-s6z2">{{ motif["motif_id"] }}</td>
+            <td class="tg-s6z2">{{ row["sequence"] }}</td>
+            <td class="tg-s6z2">{{ allele1 }}</td>
+            <td class="tg-s6z2">{{ conf_allele1 }}</td>
+            <td class="tg-s6z2">{{ reads_a1 }}</td>
+            <td class="tg-s6z2">{{ indels_a1 }}</td>
+            <td class="tg-s6z2">{{ mismatches_a1 }}</td>
+            <td class="tg-s6z2">{{ allele2 }}</td>
+            <td class="tg-s6z2">{{ conf_allele2 }}</td>
+            <td class="tg-s6z2">{{ reads_a2 }}</td>
+            <td class="tg-s6z2">{{ indels_a2 }}</td>
+            <td class="tg-s6z2">{{ mismatches_a2 }}</td>
+            <td class="tg-s6z2">{{ confidence }}</td>
+            <td class="tg-s6z2">{{ indels }}</td>
+            <td class="tg-s6z2">{{ mismatches }}</td>
+            <td class="tg-s6z2">{{ row["quality_reads"] }}</td>
+            <td class="tg-s6z2">{{ row["one_primer_reads"] }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<script>
+$(document).ready(function (){
+    $('#tg-{{ motif["motif_id"] }}').DataTable({scrollX: true});
+});
+</script>
+
+    {% for row in motif["modules"] + motif["phasings"] %}
+        <h2 id="data-{{ row["module_id"] }}">{{ motif["motif_id"] }}</h2>
+        <p>{{ row["sequence"] }}</p>
+        Nomenclatures:<br>
+        <table class="nomtg">
+            <tbody>
+                {% for nomenclature in row["nomenclatures"] %}
+                <tr>
+                    <td>{{ nomenclature["count"] }}x</td>
+                    <td>{{ nomenclature["ref"] }}</td>
+                    {%+ for part in nomenclature["noms"] %}<td>{{ part }}</td>{% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% set post_bases, post_reps, errors = data["postfilter_params"] %}
+        postfilter: bases {{ post_bases }} , repetitions {{ post_reps }} , max. errors {{ errors }}<br>
+        {% set allele1, conf_allele1, indels_a1, mismatches_a1, reads_a1 = row["allele_1"] %}
+        {% set allele2, conf_allele2, indels_a2, mismatches_a2, reads_a2 = row["allele_2"] %}
+        {% set confidence, _, _ = row["stats"] %}
+        alleles: {{ allele1 }}  ({{ conf_allele1 }}) {{ allele2 }}  ({{ conf_allele2 }}) total {{ confidence }}<br>
+
+        {% set read_counts, heatmap_data, hist2d_data = row["graph_data"] %}
+        {% if hist2d_data != None %}
+            <table class="plots">
+                <tr>
+                    <td colspan="1">
+                        <div class="hist {{ motif["motif_id"] }}" id="hist2d-{{ row["module_id"] }}"></div>
+                    </td>
+                </tr>
+            </table>
+
+            {% set z_partial, z_full, text, yaxis_text, xaxis_text = hist2d_data %}
+            <script>
+                {
+                    // https://plotly.com/javascript/reference/heatmap/
+                    let hist_data = {
+                        "data":[{
+                            "z":{{ z_partial }},
+                            "colorbar":{"title":{"text":"Partial reads"},"x":1.25},
+                            "colorscale":[[0.0, "rgba(0.92, 0.92, 0.92, 0.0)"],[0.01,"rgba(0.92, 0.92, 0.92, 1.0)"],[1.0, "rgba(0.48, 0.48, 0.48, 1.0)"]],
+                            "showscale":true,
+                            "type":"heatmap",
+                        }, {
+                            "z":{{ z_full }},
+                            "text":{{ text }},
+                            "colorbar":{"title":{"text":"Full reads"},"x":1.1},
+                            "colorscale":[[0.0,"rgba(0.85, 0.90, 0.96, 0.0)"],[0.01,"rgba(0.84, 0.90, 0.96, 1.0)"],[1.0,"rgba(0.09, 0.39, 0.67, 1.0)"]],
+                            "showscale":true,
+                            "type":"heatmap",
+                            "name":"Repetitions<br>heatmap",
+                            "hovertemplate":" %{yaxis.title.text}: %{y} <br> %{xaxis.title.text}: %{x} <br> Full / Partial: %{text}",
+                            "hoverlabel":{"font":{"family":"'Droid Sans Mono',mono"}},
+                            "texttemplate":"%{text}",
+                        }],
+                        "layout":{
+                            "width": (window.innerWidth-50) * 0.5,
+                            "height": (window.innerWidth-50) * 0.45,
+                            "yaxis": {"title":{"text":"{{ yaxis_text }}" }, "showgrid":false, "showline":true, "zeroline":false},
+                            "xaxis": {"title":{"text":"{{ xaxis_text }}" }, "showgrid":false, "showline":true, "zeroline":false}
+                        }
+                    };
+
+
+                    let updateGraph = () => {
+                        if (document.getElementById('{{ motif["motif_id"] }}').style.display === 'block') {
+                            hist_data['layout'] = {
+                                ...hist_data['layout'],
+                                width: (window.innerWidth-50) * 0.5,
+                                height: (window.innerWidth-50) * 0.45
+                            };
+                            Plotly.react('hist2d-{{ row["module_id"] }}', hist_data);
+                        }
+                    };
+
+                    $(document).ready(function() {
+                        $('.{{ motif["motif_id"] }}').bind("content-change", updateGraph);
+                        window.addEventListener('resize', updateGraph, true);
+                    });
+                }
+            </script>
+        {% else %}
+            <table class="plots">
+                <tr>
+                    <td colspan="1">
+                        <div class="hist pic100 {{ motif["motif_id"] }}" id="hist-{{ row["module_id"] }}"></div>
+                    </td>
+                    <td colspan="1">
+                        <div class="pcol pic100 {{ motif["motif_id"] }}" id="pcol-{{ row["module_id"] }}"></div>
+                    </td>
+                </tr>
+            </table>
+
+            {% if read_counts != None %}
+            {% set spanning, flanking, inread = read_counts %}
+            <script>
+                {
+                    let hist_data = {
+                        "data":[
+                            {"y":{{ spanning }},"name":"Full reads",
+                                "marker":{"color":"#636EFA"},"textfont":{"color":"#636EFA","size":7},"type":"bar","hover":"true"},
+                            {"y":{{ flanking }},"name":"Partial reads",
+                                "marker":{"color":"#CCCCCC"},"textfont":{"color":"#CCCCCC","size":7},"type":"bar","hover":"true"},
+                            {"y":{{ inread }},"name":"Inread reads",
+                                "marker":{"color":"#FF6600"},"textfont":{"color":"#FF6600","size":7},"type":"bar","hover":"true"}
+                        ],
+                        "layout":{
+                            "title":{"text":"Histogram of repetitions"},
+                            "xaxis":{"title":{"text":"STR repetitions"},"tickmode":"array","tickvals":[5,10,15,20,25,30,35,40],"ticktext":[5,10,15,20,25,30,35,40]},
+                            "yaxis": {"fixedrange":true,"title":{"text":"Read counts"}},
+                            "legend": {"x": 0.85, "y": 0.85 },
+                            "barmode":"stack",
+                            "hovermode":"x",
+                        }
+                    };
+
+                    let updateGraph = () => {
+                        if (document.getElementById('{{ motif["motif_id"] }}').style.display === 'block') {
+                            hist_data['layout'] = {
+                                ...hist_data['layout'],
+                                width: (window.innerWidth-50) * 0.6,
+                                height: (window.innerWidth-50) * 0.35,
+                            };
+                            Plotly.react('hist-{{ row["module_id"] }}', hist_data);
+                        }
+                    };
+
+                    $(document).ready(function() {
+                        $('.{{ motif["motif_id"] }}').bind("content-change", updateGraph);
+                        window.addEventListener('resize', updateGraph, true);
+                    });
+                }
+            </script>
+            {% endif %}
+
+            {% if heatmap_data != None %}
+            {% set z, text, y_tickvals, y_ticktext, x_tickvals, x_ticktext, x_pos = heatmap_data %}
+            <script>
+                {
+                    let pcol_data = {
+                        "data":[{
+                            "z": {{ z|replace("None", "null") }},
+                            "text": {{ text }},
+                            "colorscale": "YlOrRd",
+                            "reversescale": true,
+                            "showscale": true,
+                            "name":"",
+                            "type":"heatmap",
+                            "textfont":{"size":15},
+                            "hovertemplate":"%{text} - Loglog likelihood:\t%{z}",
+                            "texttemplate":"%{text}"
+                        }],
+                        "layout":{
+                            "title":{"text":"Loglog likelihood of options"},
+                            "yaxis":{
+                                "title":{"text":"1st allele"}, "tickvals": {{ y_tickvals }},"ticktext": {{ y_ticktext }},
+                                "fixedrange":true, "tickmode":"array", "showline":false,"zeroline":false,"showgrid":false
+                            },
+                            "xaxis":{
+                                "title":{"text":"2nd allele"}, "tickvals":{{ x_tickvals }},"ticktext":{{ x_ticktext }},
+                                "fixedrange":true, "tickmode":"array", "showline":false,"zeroline":false,"showgrid":false
+                            },
+                            "shapes":[{
+                                "type":"line",
+                                "x0":{{ x_pos }}, "x1":{{ x_pos }}, "xref":"x",
+                                "y0":0, "y1":1, "yref":"y domain", "line":{"color":"black","width":5}
+                            }, {
+                                "type":"line",
+                                "x0":0, "x1":1, "xref":"x domain",
+                                "y0":0.5, "y1":0.5, "yref":"y", "line":{"color":"black","width":5}
+                            }],
+                        }
+                    };
+
+                    let updateGraph = () => {
+                        if (document.getElementById('{{ motif["motif_id"] }}').style.display === 'block') {
+                            pcol_data['layout'] = {
+                                ...pcol_data['layout'],
+                                width: (window.innerWidth-50) * 0.4,
+                                height: (window.innerWidth-50) * 0.35
+                            };
+                            Plotly.react('pcol-{{ row["module_id"] }}', pcol_data);
+                        }
+                    };
+
+                    $(document).ready(function() {
+                        $('.{{ motif["motif_id"] }}').bind("content-change", updateGraph);
+                        window.addEventListener('resize', updateGraph, true);
+                    });
+                }
+            </script>
+            {% endif %}
+
+        {% endif %}
+
+        <p><a href="alignments/{{ motif["motif_id"] }}.html">Link to alignments</a></p>
+        <p><a href="#content">Back to content</a></p>
+    {% endfor %}
+</div>
+{% endfor %}
+
+<script>
+function openTab(evt, tabName) {
+    // Declare all variables
+    var i, tabcontent, tablinks;
+
+    // Get all elements with class="tabcontent" and hide them
+    tabcontent = document.getElementsByClassName("tabcontent");
+    for (i = 0; i < tabcontent.length; i++) {
+        tabcontent[i].style.display = "none";
+    }
+
+    // Get all elements with class="tablinks" and remove the class "active"
+    tablinks = document.getElementsByClassName("tablinks");
+    for (i = 0; i < tablinks.length; i++) {
+        tablinks[i].className = tablinks[i].className.replace(" active", "");
+    }
+
+    // Show the current tab, and add an "active" class to the button that opened the tab
+    document.getElementById(tabName).style.display = "block";
+    evt.currentTarget.className += " active";
+
+    var tableName = `#tg-${tabName}`;
+    var table = $(tableName).DataTable({
+        scrollX: true,
+        retrieve: true,
+    });
+
+    // Adjust columns after showing the tab and ensuring the table is visible
+    setTimeout(function() {
+        table.columns.adjust().draw();
+    }, 0); // setTimeout with 0 delay helps in cases where the layout needs to stabilize
+}
+</script>
+</body>
+</html>
+
