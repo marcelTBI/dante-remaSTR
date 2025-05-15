@@ -78,18 +78,17 @@ def main() -> None:
     # phased_sequences = get_phased_sequence(motif, genotypes, haplotypes)
     data, data_v2 = get_data(motif, annotations, genotypes, haplotypes, args.output_dir)
     data_json = store_json(data_v2)
-    # del motif, annotations, genotypes, haplotypes, data, data_v2
-    del annotations, data, data_v2
-
-    # -------------------------------------------------------------------------
-    # del motif, annotations, genotypes, haplotypes, phased_sequences, data, data_v2
-
+    del motif, annotations, genotypes, haplotypes, data, data_v2
+    print(f'Analysis time of run      : {datetime.now() - start_time}')
     # core computation ends here
+
     # next lines are only outputing things
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # print(f'Writing phased predictions: {datetime.now():%Y-%m-%d %H:%M:%S}')
-    # write_phased_predictions(phased_sequences, args.output_dir + "/phased_predictions.tsv")
+    print(f"Dumping data_v2.json: {datetime.now():%Y-%m-%d %H:%M:%S}")
+    json_example = json.dumps(data_json, indent=2)
+    with open(f"{args.output_dir}/data_v2.json", "w") as f:
+        f.write(json_example)
 
     print(f'Writing html report: {datetime.now():%Y-%m-%d %H:%M:%S}')
     script_dir = os.path.dirname(sys.argv[0]) + "/templates"
@@ -98,11 +97,6 @@ def main() -> None:
     output = template.render(data=data_json)
     with open(f"{args.output_dir}/report.html", "w") as f:
         f.write(output)
-
-    print(f"Dumping data_v2.json: {datetime.now():%Y-%m-%d %H:%M:%S}")
-    json_example = json.dumps(data_json, indent=2)
-    with open(f"{args.output_dir}/data_v2.json", "w") as f:
-        f.write(json_example)
 
     print(f"Creating histogram plots: {datetime.now():%Y-%m-%d %H:%M:%S}")
     create_histograms(data_json, args.output_dir)
@@ -114,7 +108,7 @@ def main() -> None:
     copy_includes(args.output_dir)
 
     print(f'Writing tsv output: {datetime.now():%Y-%m-%d %H:%M:%S}')
-    variants_df = construct_dataframe(motif, genotypes, haplotypes)
+    variants_df = construct_dataframe(data_json, args.input_tsv, args.male)
     variants_df.to_csv(args.output_dir + "/variants.tsv", sep='\t')
 
     print(f'Writing vcf output: {datetime.now():%Y-%m-%d %H:%M:%S}')
@@ -123,6 +117,10 @@ def main() -> None:
     end_time = datetime.now()
     print(f'DANTE_remaSTR Stopping : {end_time:%Y-%m-%d %H:%M:%S}')
     print(f'Total time of run      : {end_time - start_time}')
+
+
+def analyse_motif():
+    pass
 
 
 def copy_includes(output_dir: str) -> None:
@@ -466,7 +464,7 @@ def phase_full_locus(
 
 def generate_locus_data(gt: GenotypeInfo, motif, nomenclature_limit, motif_id, post_filter, seq):
     graph_data: GraphData
-    (module_number, anns_spanning, anns_flanking, anns_filtered, predicted, confidence, lh_array, model) = gt
+    (module_number, anns_spanning, anns_flanking, anns_filtered, predicted, raw_confidence, lh_array, model) = gt
 
     locus_nomenclatures = generate_nomenclatures(anns_spanning, module_number, None, motif, nomenclature_limit)
 
@@ -482,7 +480,7 @@ def generate_locus_data(gt: GenotypeInfo, motif, nomenclature_limit, motif_id, p
     else:
         print(f"Likelihood array is None for {motif_id}.")
 
-    row = generate_result_line(motif, predicted, confidence, len(anns_spanning), len(anns_flanking), len(anns_filtered), module_number, qual_annot=anns_spanning)
+    row = generate_result_line(motif, predicted, raw_confidence, len(anns_spanning), len(anns_flanking), len(anns_filtered), module_number, qual_annot=anns_spanning)
     row_tuple = generate_row(seq, row, post_filter)
 
     tmp = generate_motifb64(seq, row)
@@ -497,6 +495,7 @@ def generate_locus_data(gt: GenotypeInfo, motif, nomenclature_limit, motif_id, p
         (a1_prediction, a1_confidence, a1_indels, a1_mismatches, a1_reads),
         (a2_prediction, a2_confidence, a2_indels, a2_mismatches, a2_reads),
         (confidence, indels, mismatches),
+        raw_confidence,
         spanning_reads, flanking_reads,
         graph_data,
     )
@@ -528,11 +527,13 @@ def generate_locus_data2(ph, motif, seq, post_filter, motif_dir, nomenclature_li
     graph_data = (None, None, hist2d_data)
 
     _, _, a1_prediction, a1_confidence, a1_reads, a1_indels, a1_mismatches, a2_prediction, a2_confidence, a2_reads, a2_indels, a2_mismatches, confidence, indels, mismatches, spanning_reads, flanking_reads = row_tuple
+    raw_confidence = "tmp"
     locus_data2 = (
         locus_id, highlight, sequence, locus_nomenclatures,
         (a1_prediction, a1_confidence, a1_indels, a1_mismatches, a1_reads),
         (a2_prediction, a2_confidence, a2_indels, a2_mismatches, a2_reads),
         (confidence, indels, mismatches),
+        raw_confidence,
         spanning_reads, flanking_reads,
         graph_data,
     )
@@ -645,9 +646,10 @@ def store_json(old_data: tuple) -> dict:
             module["allele_1"] = old_module[4]
             module["allele_2"] = old_module[5]
             module["stats"] = old_module[6]
-            module["reads_spanning"] = old_module[7]
-            module["reads_flanking"] = old_module[8]
-            module["graph_data"] = old_module[9]
+            module["raw_conf"] = old_module[7]
+            module["reads_spanning"] = old_module[8]
+            module["reads_flanking"] = old_module[9]
+            module["graph_data"] = old_module[10]
             modules.append(module)
 
         motif["modules"] = modules
@@ -671,9 +673,10 @@ def store_json(old_data: tuple) -> dict:
             module["allele_1"] = old_phasing[4]
             module["allele_2"] = old_phasing[5]
             module["stats"] = old_phasing[6]
-            module["reads_spanning"] = old_phasing[7]
-            module["reads_flanking"] = old_phasing[8]
-            module["graph_data"] = old_phasing[9]
+            module["raw_conf"] = old_phasing[7]
+            module["reads_spanning"] = old_phasing[8]
+            module["reads_flanking"] = old_phasing[9]
+            module["graph_data"] = old_phasing[10]
             modules.append(module)
 
         motif["phasings"] = modules
@@ -705,24 +708,50 @@ def generate_nomenclatures(
 
 
 def construct_dataframe(
-    motif: Motif,
-    genotype: list[tuple],
-    phasing: list[None | tuple]
+    data_json: dict,
+    input_tsv: str,
+    male: bool
 ) -> pd.DataFrame:
+    motif_table = pd.read_csv(input_tsv, sep='\t')
+    motif = create_motif(motif_table, male)
+    annotations = create_annotations(motif_table, motif)
+
+    postfilter = PostFilter()
+
     all_result_lines: list[dict] = []
-
     rls = []
-    for gt, ph in zip(genotype, phasing):
+    for i in range(len(data_json["motifs"][0]["modules"])):
+        module = data_json["motifs"][0]["modules"][i]
 
-        (module_number, anns_spanning, anns_flanking, anns_filtered, predicted, confidence, _, _) = gt
+        module_number = module["id"][0]
+        predicted = (module["allele_1"][0], module["allele_2"][0])
+        confidence = module["raw_conf"]
+
+        anns_spanning, rest = postfilter.get_filtered(motif, annotations, module_number, both_primers=True)
+        anns_flanking, anns_filtered = postfilter.get_filtered(motif, rest, module_number, both_primers=False)
+        del rest
+
         rl_gt = generate_result_line(
             motif, predicted, confidence, len(anns_spanning), len(anns_flanking), len(anns_filtered), module_number,
             qual_annot=anns_spanning
         )
         rls.append(rl_gt)
 
-        if ph is not None:
-            (module_number, anns_2good, anns_1good, anns_0good, phasing1, supp_reads, prev_module_num) = ph
+        if i != 0:
+            module = data_json["motifs"][0]["phasings"][i - 1]
+
+            module_number = module["ids"][1]
+            phasing1 = (module["allele_1"][0], module["allele_2"][0])
+            supp_reads = (module["stats"][0], module["allele_1"][1], module["allele_2"][1])
+            prev_module_num = module["ids"][0]
+
+            mod_nums = [prev_module_num, module_number]
+            anns_2good, _filtered = postfilter.get_filtered_list(motif, annotations, mod_nums, both_primers=[True, True])
+            _left_good, _left_bad = postfilter.get_filtered_list(motif, _filtered, mod_nums, both_primers=[False, True])
+            _right_good, anns_0good = postfilter.get_filtered_list(motif, _left_bad, mod_nums, both_primers=[True, False])
+            anns_1good = _left_good + _right_good
+            del _filtered, _left_good, _left_bad, _right_good
+
             rl_ph = generate_result_line(
                 motif, phasing1, supp_reads, len(anns_2good), len(anns_1good), len(anns_0good), prev_module_num,
                 second_module_number=module_number
