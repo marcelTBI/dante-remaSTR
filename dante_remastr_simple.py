@@ -45,15 +45,6 @@ BASE_MAPPING = {
     'N': '[ACGT]'
 }
 
-# vocabulary:
-# Motif
-# Nomenclature
-# Locus - repetitive module of a Motif
-# Allele
-
-# prediction could be from -3, -2, ..., n
-# where -3 would be translated to X, -2 to E, -1 to B, and numbers to numbers
-
 
 def main() -> None:
     start_time = datetime.now()
@@ -65,7 +56,7 @@ def main() -> None:
     data_json = analyse_motif(args.input_tsv, args.male, sample)
 
     os.makedirs(args.output_dir, exist_ok=True)
-    json_example = json.dumps(data_json, indent=2)
+    json_example = json.dumps(data_json, indent=2, sort_keys=True)
     with open(f"{args.output_dir}/data.json", "w") as f:
         f.write(json_example)
 
@@ -75,22 +66,6 @@ def main() -> None:
 
 
 def analyse_motif(input_tsv: str, male: bool, sample: str):
-    motif_table = pd.read_csv(input_tsv, sep='\t')
-
-    motif_str = motif_table[MOTIF_COLUMN_NAME].iloc[0]
-    motif_name = None if 'name' not in motif_table.columns or motif_table.iloc[0]['name'] in ['None', ''] else motif_table.iloc[0]['name']
-    motif = Motif(motif_str, motif_name, male)
-
-    annotations: list[Annotation] = []
-    for _, mt_row in motif_table.iterrows():
-        annotations.append(Annotation(
-            mt_row['read_id'], mt_row['mate_order'], mt_row['read'], mt_row['reference'],
-            mt_row['modules'], mt_row['log_likelihood'], motif
-        ))
-
-    genotypes = genotype_group(motif, annotations)
-    haplotypes = phase_group(motif, annotations)
-
     main_json: dict[str, Any] = {}
     main_json["sample"] = sample
     main_json["dante_version"] = VERSION
@@ -101,14 +76,92 @@ def analyse_motif(input_tsv: str, male: bool, sample: str):
         pf_error += f' (abs={pf.max_abs_error})'
     main_json["postfilter_params"] = (pf.min_rep_len, pf.min_rep_cnt, pf_error)
 
-    __9__seq = motif.modules_str(include_flanks=True)
+    main_json["motifs"] = generate_motifs(input_tsv, male, pf)
+    return main_json
 
+
+def generate_motifs(input_tsv: str, male: bool, pf: PostFilter) -> list:
     motif_json: dict[str, Any] = {}
+
+    motif_table = pd.read_csv(input_tsv, sep='\t')
+
+    motif_str = motif_table[MOTIF_COLUMN_NAME].iloc[0]
+    motif_name = motif_table['name'].iloc[0]
+    motif = Motif(motif_str, motif_name, male)
+
+    motif_json["motif_id"] = motif.name
+    motif_json["motif_stats"] = {
+        "chrom": motif.chrom,
+        "start": motif.start,
+        "end": motif.end,
+        "modules": motif.modules
+    }
+
+    annotations: list[Annotation] = []
+    for _, mt_row in motif_table.iterrows():
+        annotations.append(Annotation(
+            mt_row['read_id'], mt_row['mate_order'], mt_row['read'], mt_row['reference'],
+            mt_row['modules'], mt_row['log_likelihood'], motif
+        ))
+
+    genotypes = []
+
+    read_distribution = np.bincount([len(ann.read_seq) for ann in annotations], minlength=100)
+    for __3__curr_module_num, _, _ in motif.get_repeating_modules():
+
+        __3__anns_spanning, __3__rest = pf.get_filtered(motif, annotations, __3__curr_module_num, both_primers=True)
+        __3__anns_flanking, __3__anns_filtered = pf.get_filtered(motif, __3__rest, __3__curr_module_num, both_primers=False)
+        del __3__rest
+
+        __3__model = Inference(read_distribution, None)
+        __3__lh_array, __3__predicted, __3__confidence = __3__model.genotype(__3__anns_spanning, __3__anns_flanking, __3__curr_module_num, motif.monoallelic)
+        genotypes.append((
+            __3__curr_module_num,
+            __3__anns_spanning,
+            __3__anns_flanking,
+            __3__anns_filtered,
+            __3__predicted,
+            __3__confidence,
+            __3__lh_array,
+            __3__model
+        ))
+
+    __9__seq = motif.modules_str(include_flanks=True)
+    __9__m_list1 = []
+    for __9__gt in genotypes:
+        __9__locus_data = generate_locus_data(__9__gt, motif, 5, motif.name, pf, __9__seq)
+        __9__m_list1.append(__9__locus_data)
+
+    haplotypes: list[None | tuple] = [None]
+
+    __5__repeating_modules = motif.get_repeating_modules()
+    for __5__i, (__5__curr_module_num, _, _) in enumerate(__5__repeating_modules[1:], start=1):
+        __5__prev_module_num = __5__repeating_modules[__5__i - 1][0]
+        __5__mod_nums = [__5__prev_module_num, __5__curr_module_num]
+
+        __5__anns_2good, __5___filtered = pf.get_filtered_list(motif, annotations, __5__mod_nums, both_primers=[True, True])
+        __5___left_good, __5___left_bad = pf.get_filtered_list(motif, __5___filtered, __5__mod_nums, both_primers=[False, True])
+        __5___right_good, __5__anns_0good = pf.get_filtered_list(motif, __5___left_bad, __5__mod_nums, both_primers=[True, False])
+        __5__anns_1good = __5___left_good + __5___right_good
+        del __5___filtered, __5___left_good, __5___left_bad, __5___right_good
+
+        __5__phasing, __5__supp_reads = phase(__5__anns_2good, __5__prev_module_num, __5__curr_module_num)
+
+        haplotypes.append(
+            (__5__curr_module_num, __5__anns_2good, __5__anns_1good, __5__anns_0good, __5__phasing, __5__supp_reads, __5__prev_module_num)
+        )
 
     # construct motif_nomenclatures
     rep_mods = motif.get_repeating_modules()
     for module_number, _, _ in rep_mods:
         annotations, _ = pf.get_filtered(motif, annotations, module_number, both_primers=True)
+
+    __9__m_list2 = []
+    for __9__ph in haplotypes[1:]:
+        __9__locus_data2 = generate_locus_data2(__9__ph, motif, __9__seq, pf, motif.name, 5)
+        __9__m_list2.append(__9__locus_data2)
+
+    motif_json["phased_seqs"] = get_phased_sequence(motif, genotypes, haplotypes)
 
     motif_nomenclatures = []
     for (count, location, part) in generate_nomenclatures(annotations, None, None, motif, 5):
@@ -117,26 +170,6 @@ def analyse_motif(input_tsv: str, male: bool, sample: str):
         motif_nomenclature["location"] = location
         motif_nomenclature["noms"] = part
         motif_nomenclatures.append(motif_nomenclature)
-
-    __9__m_list1 = []
-    for __9__gt in genotypes:
-        __9__locus_data = generate_locus_data(__9__gt, motif, 5, motif.name, pf, __9__seq)
-        __9__m_list1.append(__9__locus_data)
-
-    __9__m_list2 = []
-    for __9__ph in haplotypes[1:]:
-        __9__locus_data2 = generate_locus_data2(__9__ph, motif, __9__seq, pf, motif.name, 5)
-        __9__m_list2.append(__9__locus_data2)
-
-    motifs_5 = []
-    motif_json["motif_id"] = motif.name
-    motif_json["motif_stats"] = {
-        "chrom": motif.chrom,
-        "start": motif.start,
-        "end": motif.end,
-        "modules": motif.modules
-    }
-    motif_json["phased_seqs"] = get_phased_sequence(motif, genotypes, haplotypes)
     motif_json["nomenclatures"] = motif_nomenclatures
 
     __1__modules = []
@@ -192,11 +225,7 @@ def analyse_motif(input_tsv: str, male: bool, sample: str):
         __1__modules.append(__1__module)
 
     motif_json["phasings"] = __1__modules
-    motifs_5.append(motif_json)
-    main_json["motifs"] = motifs_5
-    data_json = main_json
-
-    return data_json
+    return [motif_json]
 
 
 def get_phased_sequence(motif: Motif, genotype: list[GenotypeInfo], phasing: list[None | tuple]) -> dict:
@@ -1035,52 +1064,6 @@ def generate_result_line(
         'conf_extended_all': confidence[6] if len(confidence) > 6 else '---',
         'repetition_index': repetition_index
     }
-
-
-def genotype_group(
-    motif: Motif, annotations: list[Annotation]  # I would prefer to get dataframe here
-) -> list[GenotypeInfo]:
-    result_genotypes = []
-
-    postfilter = PostFilter()
-    read_distribution = np.bincount([len(ann.read_seq) for ann in annotations], minlength=100)
-    for curr_module_num, _, _ in motif.get_repeating_modules():
-
-        anns_spanning, rest = postfilter.get_filtered(motif, annotations, curr_module_num, both_primers=True)
-        anns_flanking, anns_filtered = postfilter.get_filtered(motif, rest, curr_module_num, both_primers=False)
-        del rest
-
-        model = Inference(read_distribution, None)
-        lh_array, predicted, confidence = model.genotype(anns_spanning, anns_flanking, curr_module_num, motif.monoallelic)
-        result_genotypes.append(
-            (curr_module_num, anns_spanning, anns_flanking, anns_filtered, predicted, confidence, lh_array, model)
-        )
-
-    return result_genotypes
-
-
-def phase_group(motif: Motif, annotations: list[Annotation]) -> list[None | tuple]:
-    result_phasing: list[None | tuple] = [None]
-
-    postfilter = PostFilter()
-    repeating_modules = motif.get_repeating_modules()
-    for i, (curr_module_num, _, _) in enumerate(repeating_modules[1:], start=1):
-        prev_module_num = repeating_modules[i - 1][0]
-        mod_nums = [prev_module_num, curr_module_num]
-
-        anns_2good, _filtered = postfilter.get_filtered_list(motif, annotations, mod_nums, both_primers=[True, True])
-        _left_good, _left_bad = postfilter.get_filtered_list(motif, _filtered, mod_nums, both_primers=[False, True])
-        _right_good, anns_0good = postfilter.get_filtered_list(motif, _left_bad, mod_nums, both_primers=[True, False])
-        anns_1good = _left_good + _right_good
-        del _filtered, _left_good, _left_bad, _right_good
-
-        phasing, supp_reads = phase(anns_2good, prev_module_num, curr_module_num)
-
-        result_phasing.append(
-            (curr_module_num, anns_2good, anns_1good, anns_0good, phasing, supp_reads, prev_module_num)
-        )
-
-    return result_phasing
 
 
 def phase(
