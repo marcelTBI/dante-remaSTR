@@ -374,8 +374,8 @@ def write_phased_predictions(
 
     result = []
     for values in tmp2:
-        result.append(f"{values['motif_name']}\t{''.join(values['nomenclature1'])}\t{values['errors1']}\n")
-        result.append(f"{values['motif_name']}\t{''.join(values['nomenclature2'])}\t{values['errors2']}\n")
+        result.append(f"{values['motif_name']}\t{' '.join(values['nomenclature1'])}\t{values['errors1']}\n")
+        result.append(f"{values['motif_name']}\t{' '.join(values['nomenclature2'])}\t{values['errors2']}\n")
 
     with open(output, "w") as f:
         f.writelines(result)
@@ -397,11 +397,15 @@ def augment_nomenclature(
 
         assigned = False
         for j, nom in enumerate(nomenclatures[i]):
-            length, c, representation = nom
-            if length == count:
+            num_repeats, occ, representation = nom
+            mod_seq = motif.modules[1 + i][0]
+            rep_len = hgvs_to_len(representation)
+            mod_len = len(mod_seq) * count
+
+            if num_repeats == count or rep_len == mod_len:
                 result.append(representation)
-                c = int(c * (1.0 - assignment_factor))
-                nomenclatures[i][j] = (length, c, representation)
+                occ = int(occ * (1.0 - assignment_factor))
+                nomenclatures[i][j] = (num_repeats, occ, representation)
                 assigned = True
                 nomenclatures[i] = sorted(nomenclatures[i], key=lambda x: -x[1])
                 break
