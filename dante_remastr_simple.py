@@ -126,16 +126,11 @@ def generate_modules(motif: Motif, pf: PostFilter, annotations: list[Annotation]
 
     seq = motif.modules_str(include_flanks=True)
     for module_number, _, _ in motif.get_repeating_modules():
-
-        # likelihoods, prediction, raw_confidence = do_full_prediction(motif, annotations, pf, module_number)
+        heatmap_data, prediction, raw_confidence = do_full_prediction(motif, annotations, pf, module_number)
 
         anns_spanning, rest = pf.get_filtered(motif, annotations, module_number, both_primers=True)
         anns_flanking, anns_filtered = pf.get_filtered(motif, rest, module_number, both_primers=False)
         del rest
-
-        read_distribution = np.bincount([ann.read_seq_len for ann in annotations], minlength=100)
-        model = Inference(read_distribution, None)
-        likelihoods, prediction, raw_confidence = model.genotype(anns_spanning, anns_flanking, module_number, motif.monoallelic)
 
         mod_nomenclatures = generate_nomenclatures(anns_spanning, module_number, None, motif, 5)
         module_nomenclatures = []
@@ -151,13 +146,6 @@ def generate_modules(motif: Motif, pf: PostFilter, annotations: list[Annotation]
             read_counts = write_histogram_image(anns_spanning, anns_flanking, module_number)
         else:
             print(f"Zero reads in {motif.name}")
-
-        heatmap_data = None
-        if likelihoods is not None:
-            heatmap_data = draw_pcolor(model, likelihoods, motif.nomenclature)
-            pass
-        else:
-            print(f"Likelihood array is None for {motif.name}.")
 
         graph_data: GraphData
         graph_data = (read_counts, heatmap_data, None)
@@ -233,9 +221,72 @@ def do_full_prediction(motif, annotations, pf, module_number):
     anns_flanking, anns_filtered = pf.get_filtered(motif, rest, module_number, both_primers=False)
     del rest
 
-    read_distribution = np.bincount([ann.read_seq_len for ann in annotations], minlength=100)
+    spanning_observed_counts = [ann.module_repetitions[module_number] for ann in anns_spanning]
+    spanning_read_lengths = [len(ann.read_seq) for ann in anns_spanning]
+    flanking_observed_counts = [ann.module_repetitions[module_number] for ann in anns_flanking]
+    flanking_read_lengths = [len(ann.read_seq) for ann in anns_flanking]
+    monoallelic_motif = motif.monoallelic
+
+    likelihoods, prediction, raw_confidence = genotype(
+        spanning_observed_counts, spanning_read_lengths,
+        flanking_observed_counts, flanking_read_lengths,
+        monoallelic_motif
+    )
+
+    heatmap_data = None
+    if likelihoods is not None:
+        my_min_rep = 1
+        while np.isinf(likelihoods[my_min_rep][my_min_rep]):
+            my_min_rep += 1
+        my_max_rep = likelihoods.shape[0]
+        my_max_with_e = likelihoods.shape[1]
+        heatmap_data = draw_pcolor(likelihoods, motif.nomenclature, my_min_rep, my_max_rep, my_max_with_e)
+    else:
+        print(f"Likelihood array is None for {motif.name}.")
+
+    return heatmap_data, prediction, raw_confidence
+
+
+def genotype(
+    spanning_observed_counts: list[int], spanning_read_lengths: list[int],
+    flanking_observed_counts: list[int], flanking_read_lengths: list[int],
+    monoallelic_motif: bool
+) -> tuple:
+    """This function provides an interface for genotypization step."""
+    # 2025-06-04
+    # print(f"{spanning_observed_counts=}")
+    # print(f"{spanning_read_lengths=}")
+    # print(f"{flanking_observed_counts=}")
+    # print(f"{flanking_read_lengths=}")
+    # print(f"{monoallelic_motif=}")
+    # print()
+
+    if len(spanning_observed_counts) == 0 and len(flanking_observed_counts) == 0:
+        return (None, ('B', 'B'), (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+
+    read_distribution = np.bincount(spanning_read_lengths + flanking_read_lengths, minlength=100)
+    flag_spanning_flanking = np.concatenate([
+        np.ones_like(spanning_observed_counts, dtype=bool),
+        np.zeros_like(flanking_observed_counts, dtype=bool)
+    ]).astype(bool)
+
     model = Inference(read_distribution, None)
-    likelihoods, prediction, raw_confidence = model.genotype(anns_spanning, anns_flanking, module_number, motif.monoallelic)
+    lh_dict = model.real_infer(
+        np.array(spanning_observed_counts),
+        np.array(flanking_observed_counts),
+        monoallelic_motif,
+        np.array(spanning_observed_counts + flanking_observed_counts),  # this is stupid
+        np.array(spanning_read_lengths + flanking_read_lengths),        # this is stupid as well
+        flag_spanning_flanking                                          # ...
+    )
+    likelihoods, predicted_tmp = model.predict(lh_dict)
+
+    # adjust for no spanning reads (should output Background)
+    if len(spanning_observed_counts) == 0:
+        predicted_tmp = (0, 0)
+
+    prediction = model.convert_to_sym(predicted_tmp, monoallelic_motif)
+    raw_confidence = model.get_confidence(likelihoods, predicted_tmp, monoallelic_motif)
     return likelihoods, prediction, raw_confidence
 
 
@@ -1548,9 +1599,14 @@ class Inference:
         # "tuto" refers to the next line
         return allele1_likelihood + allele2_likelihood + bckgrnd_likelihood
 
-    def infer(
-        self, annotations: list[Annotation], filt_annotations: list[Annotation],
-        index_rep: int, monoallelic: bool = False
+    def real_infer(
+        self,
+        observed_annots: np.ndarray,
+        observed_fa: np.ndarray,
+        monoallelic: bool,
+        observed_arr: np.ndarray,
+        rl_arr: np.ndarray,
+        closed_arr: np.ndarray
     ) -> dict[tuple[int | str, int | str], float]:
         """
         Does all the inference,
@@ -1577,21 +1633,6 @@ class Inference:
         :param monoallelic: bool - do we have a mono-allelic motif (i.e. chrX/chrY and male sample?)
         :return: dict(tuple(int, int):float) - directory of model indices to their likelihood
         """
-        # generate closed observed and read_length arrays
-        observed_annots = np.array([ann.module_repetitions[index_rep] for ann in annotations])
-        rl_annots = np.array([len(ann.read_seq) for ann in annotations])
-        closed_annots = np.ones_like(observed_annots, dtype=bool)
-
-        # generate open observed and read_length arrays
-        observed_fa = np.array([ann.module_repetitions[index_rep] for ann in filt_annotations])
-        rl_fa = np.array([len(ann.read_seq) for ann in filt_annotations])
-        closed_fa = np.zeros_like(observed_fa, dtype=bool)
-
-        # join them and keep the information if they are open or closed
-        observed_arr = np.concatenate((observed_annots, observed_fa)).astype(int)
-        rl_arr = np.concatenate((rl_annots, rl_fa)).astype(int)
-        closed_arr = np.concatenate([closed_annots, closed_fa]).astype(bool)
-
         # generate the boundaries:
         overhead = 3
         if len(observed_annots) == 0:
@@ -1730,42 +1771,11 @@ class Inference:
             confidence_exp, confidence_exp_all
         )
 
-    def genotype(
-        self, spanning: list[Annotation], partial: list[Annotation], index_rep: int, monoallelic: bool = False
-    ) -> tuple[np.ndarray | None, tuple[str | int, str | int], Confidences]:
-        """
-        Genotype based on all annotations - infer likelihoods
-        :param spanning: list(Annotation) - good (blue) annotations
-        :param partial: list(Annotation) - (grey) annotations with one primer
-        :param index_rep: int - index of a repetition
-        :param monoallelic: bool - do we have a mono-allelic motif (i.e. chrX/chrY and male sample?)
-        :return: predicted symbols and confidences
-        """
-        # if we do not have any good annotations, then quit
-        if len(spanning) == 0 and len(partial) == 0:
-            return None, ('B', 'B'), (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-
-        # infer likelihoods
-        lh_dict = self.infer(spanning, partial, index_rep, monoallelic)
-        lh_array, predicted = self.predict(lh_dict)
-
-        # adjust for no spanning reads (should output Background)
-        if len(spanning) == 0:
-            predicted = (0, 0)
-
-        # convert numbers to symbols
-        predicted_sym = self.convert_to_sym(predicted, monoallelic)
-
-        # get confidence of our prediction
-        confidence = self.get_confidence(lh_array, predicted, monoallelic)
-
-        # return predicted and confidence
-        return lh_array, predicted_sym, confidence
-
 
 def draw_pcolor(
-    model: Inference, lh_array: np.ndarray, name: str, lognorm: bool = True
+    lh_array: np.ndarray, name: str, min_rep: int, max_rep: int, max_with_e: int, lognorm: bool = True
 ) -> ProbHeatmap:
+
     ind_good = (lh_array < 0.0) & (lh_array > -1e10) & (lh_array != np.nan)
     z_min, z_max = min(lh_array[ind_good]), max(lh_array[ind_good])
     max_str = len(lh_array)
@@ -1777,45 +1787,46 @@ def draw_pcolor(
         lh_view = lh_array.copy()
 
     # background (B, i) - copy it below min_rep
-    lh_view[model.min_rep - 1, :] = lh_view[0, :]
+    lh_view[min_rep - 1, :] = lh_view[0, :]
 
     lh_copy = lh_view.copy()
-    lh_copy[-1, model.min_rep] = lh_copy[0, 0]
-    lh_copy[-1, model.min_rep + 1] = lh_copy[0, model.max_rep]
+    lh_copy[-1, min_rep] = lh_copy[0, 0]
+    lh_copy[-1, min_rep + 1] = lh_copy[0, max_rep]
 
     title = '%s likelihood of options (%s)' % ('Loglog' if lognorm else 'Log', name)
     # print(lh_copy.shape, lognorm, title, max_str)
-    heatmap_data = save_pcolor_plotly_file(model, lh_copy, lognorm, title, max_str)
+    heatmap_data = save_pcolor_plotly_file(lh_copy, lognorm, title, max_str, min_rep, max_with_e)
     return heatmap_data
 
 
 def save_pcolor_plotly_file(
-    model: Inference, lh_copy: np.ndarray, lognorm: bool, title: str, max_str: int, start_ticks: int = 5, step_ticks: int = 5
+    lh_copy: np.ndarray, lognorm: bool, title: str, max_str: int, min_rep: int, max_with_e: int,
+    start_ticks: int = 5, step_ticks: int = 5
 ) -> ProbHeatmap:
-    text = [['' for _ in range(max_str - model.min_rep + 1)] for _ in range(max_str - model.min_rep + 1)]
+    text = [['' for _ in range(max_str - min_rep + 1)] for _ in range(max_str - min_rep + 1)]
     text[-1][0] = 'B'
     text[-1][1] = 'E'
 
     hovertext = []
-    for j in ['B'] + list(range(model.min_rep, max_str)):
-        inner = [f'{j}/{i}' for i in list(range(model.min_rep, max_str)) + ['E']]
+    for j in ['B'] + list(range(min_rep, max_str)):
+        inner = [f'{j}/{i}' for i in list(range(min_rep, max_str)) + ['E']]
         hovertext.append(inner)
 
     hovertext[0][-1] = 'E/E'
     hovertext[-1][0] = 'B'
     hovertext[-1][1] = 'E'
 
-    z: list[list[float | None]] = lh_copy[model.min_rep - 1:, model.min_rep:].tolist()
+    z: list[list[float | None]] = lh_copy[min_rep - 1:, min_rep:].tolist()
     for i in range(len(z)):
         for j in range(len(z[0])):
             if z[i][j] == -np.inf:
                 z[i][j] = None
     hovertext2: list[list[str]] = hovertext
-    y_tickvals: list[int] = list(range(start_ticks - model.min_rep + 1, max_str - model.min_rep + 1, step_ticks)) + [0]
+    y_tickvals: list[int] = list(range(start_ticks - min_rep + 1, max_str - min_rep + 1, step_ticks)) + [0]
     y_ticktext: list[int | str] = list(range(start_ticks, max_str, step_ticks)) + ['B']
-    x_tickvals: list[int] = list(range(start_ticks - model.min_rep, max_str - model.min_rep, step_ticks)) + [int(max_str - model.min_rep)]
-    x_ticktext: list[int | str] = list(range(start_ticks, max_str, step_ticks)) + ['E(>%d)' % (model.max_with_e - 2)]
-    x_pos: float = max_str - model.min_rep - 0.5
+    x_tickvals: list[int] = list(range(start_ticks - min_rep, max_str - min_rep, step_ticks)) + [int(max_str - min_rep)]
+    x_ticktext: list[int | str] = list(range(start_ticks, max_str, step_ticks)) + ['E(>%d)' % (max_with_e - 2)]
+    x_pos: float = max_str - min_rep - 0.5
 
     return (z, hovertext2, y_tickvals, y_ticktext, x_tickvals, x_ticktext, x_pos)
 
