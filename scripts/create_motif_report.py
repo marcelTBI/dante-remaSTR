@@ -84,11 +84,13 @@ def create_ticks(df: pd.DataFrame) -> list[str]:
 
 def create_main_histrogram(df: pd.DataFrame, ticks: list[str]) -> dict:
     data = [0] * len(ticks)
+    counter: set = set()
     for _, row in df.iterrows():
         try:
             idx = ticks.index(row["nomenclature1_join"])
         except ValueError:
             continue
+        counter.add(idx)
         data[idx] += 1
 
     for _, row in df.iterrows():
@@ -96,8 +98,10 @@ def create_main_histrogram(df: pd.DataFrame, ticks: list[str]) -> dict:
             idx = ticks.index(row["nomenclature2_join"])
         except ValueError:
             continue
+        counter.add(idx)
         data[idx] += 1
 
+    print(f"Histogram unique nomenclatures: {len(counter)}")
     result = {
         "tickvals": list(range(len(ticks))),
         "ticktext": ticks,
@@ -108,6 +112,7 @@ def create_main_histrogram(df: pd.DataFrame, ticks: list[str]) -> dict:
 
 def create_main_heatmap(df: pd.DataFrame, ticks: list[str]) -> dict:
     data: list[list[int | None]] = [[0 for _ in range(len(ticks))] for _ in range(len(ticks))]
+    counter: set = set()
     for _, row in df.iterrows():
         try:
             idx1 = ticks.index(row["nomenclature1_join"])
@@ -115,7 +120,9 @@ def create_main_heatmap(df: pd.DataFrame, ticks: list[str]) -> dict:
         except ValueError:
             continue
         idx1, idx2 = min(idx1, idx2), max(idx1, idx2)
+        counter.add((idx1, idx2))
         data[idx1][idx2] += 1  # type: ignore
+    print(f"Heatmap unique combinations: {len(counter)}")
 
     for i in range(len(ticks)):
         for j in range(i + 1, len(ticks)):
@@ -127,6 +134,54 @@ def create_main_heatmap(df: pd.DataFrame, ticks: list[str]) -> dict:
         "z": data
     }
     return result
+
+
+def more_eq_than_6_fullreads(item):
+    sample, path, data = item
+    num_of_full_reads = sum([x["count"] for x in data["nomenclatures"]])
+    return num_of_full_reads >= 6
+
+
+def more_eq_than_10_fullreads(item):
+    sample, path, data = item
+    num_of_full_reads = sum([x["count"] for x in data["nomenclatures"]])
+    return num_of_full_reads >= 10
+
+
+def more_eq_than_3_allelereads(item):
+    sample, path, data = item
+    for m in data["modules"]:
+        a1_reads = m["allele_1"][4]
+        a2_reads = m["allele_2"][4]
+        if a1_reads < 3:
+            return False
+        if a2_reads < 3:
+            return False
+        a1_pred = m["allele_1"][0]
+        a2_pred = m["allele_2"][0]
+        # homozygous case
+        if a1_pred == a2_pred and a1_reads / 2 < 3:  # covers also a2_reads / 2
+            return False
+
+    return True
+
+
+def more_eq_than_5_allelereads(item):
+    sample, path, data = item
+    for m in data["modules"]:
+        a1_reads = m["allele_1"][4]
+        a2_reads = m["allele_2"][4]
+        if a1_reads < 5:
+            return False
+        if a2_reads < 5:
+            return False
+        a1_pred = m["allele_1"][0]
+        a2_pred = m["allele_2"][0]
+        # homozygous case
+        if a1_pred == a2_pred and a1_reads / 2 < 5:  # covers also a2_reads / 2
+            return False
+
+    return True
 
 
 def generate_df(v):
@@ -146,6 +201,12 @@ def generate_df(v):
     df = pd.DataFrame.from_records(data_tmp1, columns=columns)
     df["nomenclature1_join"] = df["nomenclature1"].apply(lambda x: "".join(x))
     df["nomenclature2_join"] = df["nomenclature2"].apply(lambda x: "".join(x))
+
+    # 2025-06-02
+    # df["nomenclature1_join"] = df["nomenclature1"].apply(lambda x: x[0])
+    # df["nomenclature2_join"] = df["nomenclature2"].apply(lambda x: x[0])
+    # df["nomenclature1_len"] = df["nomenclature1_join"].apply(lambda x: len(x))
+    # df["nomenclature2_len"] = df["nomenclature2_join"].apply(lambda x: len(x))
     return df
 
 
@@ -286,6 +347,8 @@ def allele_num(x: int | str) -> int:
 
 
 def filter_ticks(ticks: list[str], df: pd.DataFrame, at_least: int) -> list[str]:
+    if at_least == 0:
+        return ticks
     tmp = create_main_histrogram(df, ticks)
     data = tmp["x"]
 
@@ -297,17 +360,35 @@ def filter_ticks(ticks: list[str], df: pd.DataFrame, at_least: int) -> list[str]
     return new_ticks
 
 
+def write_structural_nomenclatures(items, motif) -> list[str]:
+    result = []
+    for item in items:
+        sample, path, data = item
+        nom1 = " ".join(data["phased_seqs"]["nomenclature1"])
+        nom2 = " ".join(data["phased_seqs"]["nomenclature2"])
+        line = "\t".join([sample, motif, nom1, nom2])
+        result.append(line)
+    return result
+
+
 def main() -> None:
     args = load_arguments()
     motif_dict = collect_jsons(args.inputs, args.output_dir)
 
     print("Aggregates done. Creating HTMLs.")
     for motif, v in motif_dict.items():
-        # if motif != "ALS" and motif != "DM2":
+        # 2025-06-04
+        # if motif != "DM2" and motif != "HD":
         #     continue
 
+        # 2025-06-02
+        # v = list(filter(more_eq_than_6_fullreads, v))
+        # v = list(filter(more_eq_than_10_fullreads, v))
+        # v = list(filter(more_eq_than_3_allelereads, v))
+        # v = list(filter(more_eq_than_5_allelereads, v))
+
         n_modules = len(v[0][2]["modules"])
-        print(f"Creating report fo motif {motif} ({n_modules=}). Writting {args.output_dir}/{motif}.html.")
+        print(f"Creating report of motif {motif} ({n_modules=}). Writting {args.output_dir}/{motif}.html.")
 
         sequence = convert_modules(v[0][2]["motif_stats"]["modules"])
         df = generate_df(v)
@@ -331,6 +412,10 @@ def main() -> None:
         output = template.render(data=data)
         with open(f"{args.output_dir}/{motif}.html", "w") as f:
             f.write(output)
+
+        output2 = write_structural_nomenclatures(v, motif)
+        with open(f"{args.output_dir}/{motif}.structures.tsv", "w") as f:
+            f.write("\n".join(output2))
 
     copy_includes(args.output_dir)
 
