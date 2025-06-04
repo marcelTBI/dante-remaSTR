@@ -124,14 +124,16 @@ def generate_motifs(input_tsv: str, male: bool, pf: PostFilter) -> list:
 def generate_modules(motif: Motif, pf: PostFilter, annotations: list[Annotation]):
     modules = []
 
-    read_distribution = np.bincount([ann.read_seq_len for ann in annotations], minlength=100)
     seq = motif.modules_str(include_flanks=True)
     for module_number, _, _ in motif.get_repeating_modules():
+
+        # likelihoods, prediction, raw_confidence = do_full_prediction(motif, annotations, pf, module_number)
 
         anns_spanning, rest = pf.get_filtered(motif, annotations, module_number, both_primers=True)
         anns_flanking, anns_filtered = pf.get_filtered(motif, rest, module_number, both_primers=False)
         del rest
 
+        read_distribution = np.bincount([ann.read_seq_len for ann in annotations], minlength=100)
         model = Inference(read_distribution, None)
         likelihoods, prediction, raw_confidence = model.genotype(anns_spanning, anns_flanking, module_number, motif.monoallelic)
 
@@ -153,35 +155,88 @@ def generate_modules(motif: Motif, pf: PostFilter, annotations: list[Annotation]
         heatmap_data = None
         if likelihoods is not None:
             heatmap_data = draw_pcolor(model, likelihoods, motif.nomenclature)
+            pass
         else:
             print(f"Likelihood array is None for {motif.name}.")
 
         graph_data: GraphData
         graph_data = (read_counts, heatmap_data, None)
 
-        __1__row = generate_result_line2(motif, prediction, raw_confidence, len(anns_spanning), len(anns_flanking), len(anns_filtered), module_number, qual_annot=anns_spanning)
-        __1__row_tuple = generate_row2(seq, __1__row, pf)
-        _, _, __1__a1_prediction, __1__a1_confidence, __1__a1_reads, __1__a1_indels, __1__a1_mismatches, __1__a2_prediction, __1__a2_confidence, __1__a2_reads, __1__a2_indels, __1__a2_mismatches, __1__confidence, __1__indels, __1__mismatches, __1__spanning_reads, __1__flanking_reads = __1__row_tuple
-        __1__tmp = generate_motifb64_2(seq, __1__row)
-        (module_id, myid, _, _, _, _, sequence) = __1__tmp
-        del __1__row
+        # until here it is quite ok, but here the mess begins
+        a1_reads: int | str = '---'
+        a2_reads: int | str = '---'
+        indels: float | str = '---'
+        a1_indels: float | str = '---'
+        a2_indels: float | str = '---'
+        mismatches: float | str = '---'
+        a1_mismatches: float | str = '---'
+        a2_mismatches: float | str = '---'
+        # get info about errors and number of reads from quality annotations if provided
+        if anns_spanning is not None:
+            # get info about number of reads
+            __7__a1 = int(prediction[0]) if isinstance(prediction[0], int) else None
+            __7__a2 = int(prediction[1]) if isinstance(prediction[1], int) else None
+            a1_reads = 0 if __7__a1 is None else len([a for a in anns_spanning if a.module_repetitions[module_number] == __7__a1])
+            a2_reads = 0 if __7__a2 is None else len([a for a in anns_spanning if a.module_repetitions[module_number] == __7__a2])
 
-        module = {}
+            # get info about errors
+            __7__errors = [a.get_module_errors(motif, module_number) for a in anns_spanning]
+            __7__errors_a1 = [a.get_module_errors(motif, module_number) for a in anns_spanning if a.module_repetitions[module_number] == __7__a1]
+            __7__errors_a2 = [a.get_module_errors(motif, module_number) for a in anns_spanning if a.module_repetitions[module_number] == __7__a2]
+            assert len([l for i, _, l in __7__errors if l == 0]) == 0
+
+            # extract error metrics
+            indels, mismatches = errors_per_read(__7__errors, relative=True)
+            a1_indels, a1_mismatches = errors_per_read(__7__errors_a1, relative=True)
+            a2_indels, a2_mismatches = errors_per_read(__7__errors_a2, relative=True)
+
+        # fill templates:
+        confidence = float_to_str(raw_confidence[0], percents=True)
+        indels = float_to_str(indels, decimals=2)
+        mismatches = float_to_str(mismatches, decimals=2)
+
+        a1_confidence = float_to_str(raw_confidence[1], percents=True)
+        a1_indels = float_to_str(a1_indels, decimals=2)
+        a1_mismatches = float_to_str(a1_mismatches, decimals=2)
+
+        a2_confidence = float_to_str(raw_confidence[2], percents=True)
+        a2_indels = float_to_str(a2_indels, decimals=2)
+        a2_mismatches = float_to_str(a2_mismatches, decimals=2)
+
+        myid = list(map(int, str(module_number).split('_')))
+        sequence, _ = highlight_subpart(seq, myid)
+        __17__motif_name_part1 = f'{motif.name.replace("/", "_")}'
+        __17__motif_name_part2 = f'{",".join(map(str, myid)) if myid is not None else "mot"}'
+        __17__motif_name_long = f'{__17__motif_name_part1}_{__17__motif_name_part2}'
+        __17__motif_clean = re.sub(r'[^\w_]', '', __17__motif_name_long)
+        mname = __17__motif_clean.rsplit('_', 1)[0]
+        module_id = mname if myid == [1] else __17__motif_clean  # trick to solve static html
+
+        module: dict[str, Any] = {}
         module["module_id"] = module_id
         module["id"] = myid
         module["sequence"] = sequence
-
         module["nomenclatures"] = module_nomenclatures
-
-        module["allele_1"] = (__1__a1_prediction, __1__a1_confidence, __1__a1_indels, __1__a1_mismatches, __1__a1_reads)
-        module["allele_2"] = (__1__a2_prediction, __1__a2_confidence, __1__a2_indels, __1__a2_mismatches, __1__a2_reads)
-        module["stats"] = (__1__confidence, __1__indels, __1__mismatches)
+        module["allele_1"] = (prediction[0], a1_confidence, a1_indels, a1_mismatches, a1_reads)
+        module["allele_2"] = (prediction[1], a2_confidence, a2_indels, a2_mismatches, a2_reads)
+        module["stats"] = (confidence, indels, mismatches)
         module["raw_conf"] = raw_confidence
-        module["reads_spanning"] = __1__spanning_reads
-        module["reads_flanking"] = __1__flanking_reads
+        module["reads_spanning"] = len(anns_spanning)
+        module["reads_flanking"] = len(anns_flanking)
         module["graph_data"] = graph_data
         modules.append(module)
     return modules
+
+
+def do_full_prediction(motif, annotations, pf, module_number):
+    anns_spanning, rest = pf.get_filtered(motif, annotations, module_number, both_primers=True)
+    anns_flanking, anns_filtered = pf.get_filtered(motif, rest, module_number, both_primers=False)
+    del rest
+
+    read_distribution = np.bincount([ann.read_seq_len for ann in annotations], minlength=100)
+    model = Inference(read_distribution, None)
+    likelihoods, prediction, raw_confidence = model.genotype(anns_spanning, anns_flanking, module_number, motif.monoallelic)
+    return likelihoods, prediction, raw_confidence
 
 
 def generate_phased_seqs(motif: Motif, pf: PostFilter, annotations: list[Annotation], modules: dict, phasings: dict):
@@ -873,84 +928,6 @@ def errors_per_read(
         float(np.mean([indels for indels, _, _ in errors])),
         float(np.mean([mismatches for _, mismatches, _ in errors]))
     )
-
-
-def generate_result_line2(
-    motif: Motif, predicted: tuple[str | int, str | int], confidence: tuple[float | str, ...],
-    qual_num: int, primer_num: int, filt_num: int, module_number: int,
-    qual_annot: list[Annotation] | None = None,
-    second_module_number: int | None = None
-) -> dict:
-    """
-    Generate result line from the template string.
-    :param motif_class: Motif - motif class
-    :param predicted: tuple[str, str] - predicted alleles (number or 'B'/'E')
-    :param confidence: tuple[7x float/str] - confidences of prediction
-    :param qual_num: int - number of reads with both primers
-    :param primer_num: int - number of reads with exactly one primer
-    :param filt_num: int - number of filtered out reads (no primers, many errors, ...)
-    :param module_number: int - module number in motif
-    :param qual_annot: list[Annotation] - list of quality annotations for error and number of reads
-    :param second_module_number: int/None - second module number in motif
-    :return: dict - result dictionary
-    """
-    # setup motif info
-    start, end = motif.get_location_subpart(module_number)
-    motif_seq = motif.module_str(module_number)
-    repetition_index: int | str = module_number
-    if second_module_number is not None:
-        _, end = motif.get_location_subpart(second_module_number)
-        motif_seq = ','.join([motif.module_str(i) for i in range(module_number, second_module_number + 1)])
-        repetition_index = f'{module_number}_{second_module_number}'
-
-    reads_a1: int | str
-    reads_a2: int | str
-    indels_rel: float | str
-    indels_rel1: float | str
-    indels_rel2: float | str
-    mismatches_rel: float | str
-    mismatches_rel1: float | str
-    mismatches_rel2: float | str
-    # get info about errors and number of reads from quality annotations if provided
-    reads_a1 = reads_a2 = '---'
-    indels_rel = mismatches_rel = '---'
-    indels_rel1 = mismatches_rel1 = '---'
-    indels_rel2 = mismatches_rel2 = '---'
-    if qual_annot is not None:
-        # get info about number of reads
-        a1 = int(predicted[0]) if isinstance(predicted[0], int) else None
-        a2 = int(predicted[1]) if isinstance(predicted[1], int) else None
-        reads_a1 = 0 if a1 is None else len([a for a in qual_annot if a.module_repetitions[module_number] == a1])
-        reads_a2 = 0 if a2 is None else len([a for a in qual_annot if a.module_repetitions[module_number] == a2])
-
-        # get info about errors
-        errors = [a.get_module_errors(motif, module_number) for a in qual_annot]
-        errors_a1 = [a.get_module_errors(motif, module_number) for a in qual_annot
-                     if a.module_repetitions[module_number] == a1]
-        errors_a2 = [a.get_module_errors(motif, module_number) for a in qual_annot
-                     if a.module_repetitions[module_number] == a2]
-        assert len([l for i, _, l in errors if l == 0]) == 0
-
-        # extract error metrics
-        indels_rel, mismatches_rel = errors_per_read(errors, relative=True)
-        indels_rel1, mismatches_rel1 = errors_per_read(errors_a1, relative=True)
-        indels_rel2, mismatches_rel2 = errors_per_read(errors_a2, relative=True)
-
-    return {
-        'motif_name': motif.name, 'motif_nomenclature': motif.nomenclature, 'motif_sequence': motif_seq,
-        'chromosome': motif.chrom, 'start': start, 'end': end,
-        'allele1': predicted[0], 'allele2': predicted[1],
-        'confidence': confidence[0], 'conf_allele1': confidence[1], 'conf_allele2': confidence[2],
-        'reads_a1': reads_a1, 'reads_a2': reads_a2,
-        'indels': indels_rel, 'indels_a1': indels_rel1, 'indels_a2': indels_rel2,
-        'mismatches': mismatches_rel, 'mismatches_a1': mismatches_rel1, 'mismatches_a2': mismatches_rel2,
-        'quality_reads': qual_num, 'one_primer_reads': primer_num, 'filtered_reads': filt_num,
-        'conf_background': confidence[3] if len(confidence) > 3 else '---',
-        'conf_background_all': confidence[4] if len(confidence) > 4 else '---',
-        'conf_extended': confidence[5] if len(confidence) > 5 else '---',
-        'conf_extended_all': confidence[6] if len(confidence) > 6 else '---',
-        'repetition_index': repetition_index
-    }
 
 
 def generate_result_line(
@@ -1875,73 +1852,6 @@ def float_to_str(c: float | str, percents: bool = False, decimals: int = 1) -> s
     return c
 
 
-def generate_row2(sequence: str, result: dict, postfilter: PostFilter) -> tuple:
-    """
-    Generate rows of a summary table in html report.
-    :param sequence: str - motif sequence
-    :param result: pd.Series - result row to convert to table
-    :param postfilter: PostFilter - postfilter dict from config
-    :return: str - html string with rows of the summary table
-    """
-    highlight = list(map(int, str(result['repetition_index']).split('_')))
-    sequence, _subpart = highlight_subpart(sequence, highlight)
-
-    # shorten sequence:
-    keep = 10
-    first = sequence.find(',')
-    last = sequence.rfind(',')
-    smaller_seq = sequence if first == -1 else '...' + sequence[first - keep:last + keep + 1] + '...'
-
-    # errors:
-    errors = f'{postfilter.max_rel_error * 100:.0f}%'
-    if postfilter.max_abs_error is not None:
-        errors += f' (abs={postfilter.max_abs_error})'
-
-    # fill templates:
-    updated_result = {
-        'conf_allele1': float_to_str(result['conf_allele1'], percents=True),
-        'conf_allele2': float_to_str(result['conf_allele2'], percents=True),
-        'confidence': float_to_str(result['confidence'], percents=True),
-        'motif_nomenclature': smaller_seq,
-        'indels': float_to_str(result['indels'], decimals=2),
-        'mismatches': float_to_str(result['mismatches'], decimals=2),
-        'indels_a1': float_to_str(result['indels_a1'], decimals=2),
-        'mismatches_a1': float_to_str(result['mismatches_a1'], decimals=2),
-        'indels_a2': float_to_str(result['indels_a2'], decimals=2),
-        'mismatches_a2': float_to_str(result['mismatches_a2'], decimals=2)
-    }
-    # return ROW_STRING.format(**{**result, **updated_result})
-    motif_name = result['motif_name']
-    motif_nomenclature = updated_result['motif_nomenclature']
-    allele1 = result['allele1']
-    conf_allele1 = updated_result['conf_allele1']
-    reads_a1 = result['reads_a1']
-    indels_a1 = updated_result['indels_a1']
-    mismatches_a1 = updated_result['mismatches_a1']
-
-    allele2 = result['allele2']
-    conf_allele2 = updated_result['conf_allele2']
-    reads_a2 = result['reads_a2']
-    indels_a2 = updated_result['indels_a2']
-    mismatches_a2 = updated_result['mismatches_a2']
-
-    confidence = updated_result['confidence']
-    indels = updated_result['indels']
-    mismatches = updated_result['mismatches']
-    quality_reads = result['quality_reads']
-    one_primer_reads = result['one_primer_reads']
-
-    row_tuple = (
-        motif_name, motif_nomenclature,
-        allele1, conf_allele1, reads_a1, indels_a1, mismatches_a1,
-        allele2, conf_allele2, reads_a2, indels_a2, mismatches_a2,
-        confidence, indels, mismatches, quality_reads, one_primer_reads
-    )
-
-    return row_tuple
-    # return (result, updated_result)
-
-
 def generate_row(sequence: str, result: dict, postfilter: PostFilter) -> tuple:
     """
     Generate rows of a summary table in html report.
@@ -2010,34 +1920,6 @@ def generate_row(sequence: str, result: dict, postfilter: PostFilter) -> tuple:
 
 
 def generate_motifb64(seq: str, row: dict) -> tuple:
-    highlight = list(map(int, str(row['repetition_index']).split('_')))
-    # print(f"{highlight=}") -> [1, 2]
-    sequence, _ = highlight_subpart(seq, highlight)
-    motif_name = row['motif_name']
-    motif_name_part1 = f'{motif_name.replace("/", "_")}'
-    motif_name_part2 = f'{",".join(map(str, highlight)) if highlight is not None else "mot"}'
-    motif_name_long = f'{motif_name_part1}_{motif_name_part2}'
-    motif_clean = re.sub(r'[^\w_]', '', motif_name_long)
-    motif_id = motif_clean.rsplit('_', 1)[0]
-    motif_clean_id = motif_id if highlight == [1] else motif_clean  # trick to solve static html
-    # motif_clean_id sucks... and unfortunatelly it is used as module_id in json
-
-    a1 = row['allele1']
-    a2 = row['allele2']
-    conf_total = float_to_str(row['confidence'], percents=True)
-    conf_a1 = float_to_str(row['conf_allele1'], percents=True)
-    conf_a2 = float_to_str(row['conf_allele2'], percents=True)
-    if (a1 == 'B' and a2 == 'B') or (a1 == 0 and a2 == 0):
-        result = f'BG {conf_total}'
-    else:
-        result = f'{str(a1):2s} ({conf_a1}) {str(a2):2s} ({conf_a2}) total {conf_total}'
-
-    alignment = f"{motif_name}/alignments.html"
-
-    return (motif_clean_id, highlight, motif_id, motif_name, result, alignment, sequence)
-
-
-def generate_motifb64_2(seq: str, row: dict) -> tuple:
     highlight = list(map(int, str(row['repetition_index']).split('_')))
     # print(f"{highlight=}") -> [1, 2]
     sequence, _ = highlight_subpart(seq, highlight)
