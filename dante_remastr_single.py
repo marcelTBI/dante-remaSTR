@@ -67,18 +67,9 @@ def main() -> None:
 
     print('DANTE_remaSTR = "Da Amazing NucleoTide Exposer" (remastered)')
     print(f'DANTE_remaSTR Starting : {start_time:%Y-%m-%d %H:%M:%S}')
+    sample = os.path.basename(os.path.normpath(args.output_dir))
 
-    motif_table = pd.read_csv(args.input_tsv, sep='\t')
-    motif = create_motif(motif_table, args.male)
-    annotations = create_annotations(motif_table, motif)
-    del motif_table
-    genotypes = genotype_group(motif, annotations)
-    haplotypes = phase_group(motif, annotations)
-
-    # phased_sequences = get_phased_sequence(motif, genotypes, haplotypes)
-    data, data_v2 = get_data(motif, annotations, genotypes, haplotypes, args.output_dir)
-    data_json = store_json(data_v2)
-    del motif, annotations, genotypes, haplotypes, data, data_v2
+    data_json = analyse_motif(args.input_tsv, args.male, sample)
     print(f'Analysis time of run      : {datetime.now() - start_time}')
     # core computation ends here
 
@@ -119,8 +110,120 @@ def main() -> None:
     print(f'Total time of run      : {end_time - start_time}')
 
 
-def analyse_motif():
-    pass
+def analyse_motif(input_tsv: str, male: bool, sample: str):
+    motif_table = pd.read_csv(input_tsv, sep='\t')
+    motif = create_motif(motif_table, male)
+    annotations = create_annotations(motif_table, motif)
+
+    genotypes = genotype_group(motif, annotations)
+    haplotypes = phase_group(motif, annotations)
+
+    main_json: dict[str, Any] = {}
+    main_json["sample"] = sample
+    main_json["dante_version"] = VERSION
+
+    pf = PostFilter()
+    pf_error = f'{pf.max_rel_error * 100:.0f}%'
+    if pf.max_abs_error is not None:
+        pf_error += f' (abs={pf.max_abs_error})'
+    main_json["postfilter_params"] = (pf.min_rep_len, pf.min_rep_cnt, pf_error)
+
+    __9__seq = motif.modules_str(include_flanks=True)
+
+    motif_json: dict[str, Any] = {}
+
+    # construct motif_nomenclatures
+    rep_mods = motif.get_repeating_modules()
+    for module_number, _, _ in rep_mods:
+        annotations, _ = pf.get_filtered(motif, annotations, module_number, both_primers=True)
+
+    motif_nomenclatures = []
+    for (count, location, part) in generate_nomenclatures(annotations, None, None, motif, 5):
+        motif_nomenclature: dict[str, Any] = {}
+        motif_nomenclature["count"] = count
+        motif_nomenclature["location"] = location
+        motif_nomenclature["noms"] = part
+        motif_nomenclatures.append(motif_nomenclature)
+
+    __9__m_list1 = []
+    for __9__gt in genotypes:
+        __9__locus_data = generate_locus_data(__9__gt, motif, 5, motif.name, pf, __9__seq)
+        __9__m_list1.append(__9__locus_data)
+
+    __9__m_list2 = []
+    for __9__ph in haplotypes[1:]:
+        __9__locus_data2 = generate_locus_data2(__9__ph, motif, __9__seq, pf, motif.name, 5)
+        __9__m_list2.append(__9__locus_data2)
+
+    motifs_5 = []
+    motif_json["motif_id"] = motif.name
+    motif_json["motif_stats"] = {
+        "chrom": motif.chrom,
+        "start": motif.start,
+        "end": motif.end,
+        "modules": motif.modules
+    }
+    motif_json["phased_seqs"] = get_phased_sequence(motif, genotypes, haplotypes)
+    motif_json["nomenclatures"] = motif_nomenclatures
+
+    __1__modules = []
+    for __1__old_module in __9__m_list1:
+        __1__module = {}
+        __1__module["module_id"] = __1__old_module[0]
+        __1__module["id"] = __1__old_module[1]
+        __1__module["sequence"] = __1__old_module[2]
+
+        module_nomenclatures = []
+        for __1__old_nomenclature in __1__old_module[3]:
+            __1__nomenclature = {}
+            __1__nomenclature["count"] = __1__old_nomenclature[0]
+            __1__nomenclature["location"] = __1__old_nomenclature[1]
+            __1__nomenclature["noms"] = __1__old_nomenclature[2]
+            module_nomenclatures.append(__1__nomenclature)
+        __1__module["nomenclatures"] = module_nomenclatures
+
+        __1__module["allele_1"] = __1__old_module[4]
+        __1__module["allele_2"] = __1__old_module[5]
+        __1__module["stats"] = __1__old_module[6]
+        __1__module["raw_conf"] = __1__old_module[7]
+        __1__module["reads_spanning"] = __1__old_module[8]
+        __1__module["reads_flanking"] = __1__old_module[9]
+        __1__module["graph_data"] = __1__old_module[10]
+        __1__modules.append(__1__module)
+
+    motif_json["modules"] = __1__modules
+
+    __1__modules = []
+    for __1__old_phasing in __9__m_list2:
+        __1__module = {}
+        __1__module["module_id"] = __1__old_phasing[0]
+        __1__module["ids"] = __1__old_phasing[1]
+        __1__module["sequence"] = __1__old_phasing[2]
+
+        module_nomenclatures = []
+        for __1__old_nomenclature in __1__old_phasing[3]:
+            __1__nomenclature = {}
+            __1__nomenclature["count"] = __1__old_nomenclature[0]
+            __1__nomenclature["location"] = __1__old_nomenclature[1]
+            __1__nomenclature["noms"] = __1__old_nomenclature[2]
+            module_nomenclatures.append(__1__nomenclature)
+        __1__module["nomenclatures"] = module_nomenclatures
+
+        __1__module["allele_1"] = __1__old_phasing[4]
+        __1__module["allele_2"] = __1__old_phasing[5]
+        __1__module["stats"] = __1__old_phasing[6]
+        __1__module["raw_conf"] = __1__old_phasing[7]
+        __1__module["reads_spanning"] = __1__old_phasing[8]
+        __1__module["reads_flanking"] = __1__old_phasing[9]
+        __1__module["graph_data"] = __1__old_phasing[10]
+        __1__modules.append(__1__module)
+
+    motif_json["phasings"] = __1__modules
+    motifs_5.append(motif_json)
+    main_json["motifs"] = motifs_5
+    data_json = main_json
+
+    return data_json
 
 
 def copy_includes(output_dir: str) -> None:
@@ -502,7 +605,7 @@ def generate_locus_data(gt: GenotypeInfo, motif, nomenclature_limit, motif_id, p
     return locus_data
 
 
-def generate_locus_data2(ph, motif, seq, post_filter, motif_dir, nomenclature_limit):
+def generate_locus_data2(ph, motif, seq, post_filter, motif_id, nomenclature_limit):
     pass
     if ph is None:
         raise ValueError
@@ -519,7 +622,7 @@ def generate_locus_data2(ph, motif, seq, post_filter, motif_dir, nomenclature_li
 
     annotations = anns_2good + anns_1good
     if len(annotations) == 0:
-        print(f"{motif_dir} {suffix} is empty")
+        print(f"{motif_id} {suffix} is empty")
 
     locus_nomenclatures = generate_nomenclatures(anns_2good, prev_module_num, second_module_number, motif, nomenclature_limit)
     hist2d_data = write_histogram_image2d(annotations, prev_module_num, second_module_number, motif.module_str(prev_module_num), motif.module_str(second_module_number))
@@ -538,151 +641,6 @@ def generate_locus_data2(ph, motif, seq, post_filter, motif_dir, nomenclature_li
         graph_data,
     )
     return locus_data2
-
-
-def get_data(
-    motif: Motif,
-    anns: list[Annotation],
-    genotype: list[GenotypeInfo],
-    phasing: list[None | tuple],
-    output_dir: str,  # TODO: remove this
-    nomenclature_limit: int = 5
-) -> tuple:
-    post_filter = PostFilter()
-    post_bases = post_filter.min_rep_len
-    post_reps = post_filter.min_rep_cnt
-    post_errors = f'{post_filter.max_rel_error * 100:.0f}%'
-    if post_filter.max_abs_error is not None:
-        post_errors += f' (abs={post_filter.max_abs_error})'
-    postfilter_data = (post_bases, post_reps, post_errors)
-
-    tabs = []
-    tabs2 = []
-
-    motif_dir = f'{output_dir}/{motif.dir_name()}'
-    seq = motif.modules_str(include_flanks=True)
-    # why are we changing motif_id? And why delete first not matching [a-zA-Z_] and only first?
-    # motif_id = re.sub(r'[^\w_]', '', motif.name.replace('/', '_'))
-    motif_id = motif.name
-    # motif_nom = motif.nomenclature
-    # print(motif.chrom, motif.start, motif.end, motif.modules)
-    motif_stat = {
-        "chrom": motif.chrom,
-        "start": motif.start,
-        "end": motif.end,
-        "modules": motif.modules
-    }
-
-    repeating_modules = motif.get_repeating_modules()
-    annotations = anns
-    for module_number, _, _ in repeating_modules:
-        annotations, _ = post_filter.get_filtered(motif, annotations, module_number, both_primers=True)
-    nomenclatures = generate_nomenclatures(annotations, None, None, motif, nomenclature_limit)
-
-    m_list1 = []
-    for gt in genotype:
-        locus_data = generate_locus_data(gt, motif, nomenclature_limit, motif_id, post_filter, seq)
-        m_list1.append(locus_data)
-
-    m_list2 = []
-    for ph in phasing[1:]:
-        locus_data2 = generate_locus_data2(ph, motif, seq, post_filter, motif_dir, nomenclature_limit)
-        m_list2.append(locus_data2)
-
-    phased_seqs = get_phased_sequence(motif, genotype, phasing)
-
-    tabs.append((motif_id, nomenclatures, m_list1, m_list2))
-    tabs2.append((motif_id, motif_stat, phased_seqs, nomenclatures, m_list1, m_list2))
-
-    sample = os.path.basename(os.path.normpath(output_dir))
-    version = VERSION
-    tabs = sorted(tabs, key=lambda x: x[0])
-
-    data = (sample, version, postfilter_data, tabs)
-    data2 = (sample, version, postfilter_data, tabs2)
-
-    return (data, data2)
-
-
-def store_json(old_data: tuple) -> dict:
-    data = {}
-    data["sample"] = old_data[0]
-    data["dante_version"] = old_data[1]
-    data["postfilter_params"] = old_data[2]
-
-    motifs = []
-    for old_motif in old_data[3]:
-        motif = {}
-        motif["motif_id"] = old_motif[0]
-        motif["motif_stats"] = old_motif[1]
-        motif["phased_seqs"] = old_motif[2]
-
-        nomenclatures = []
-        for old_nomenclature in old_motif[3]:
-            nomenclature = {}
-            nomenclature["count"] = old_nomenclature[0]
-            nomenclature["location"] = old_nomenclature[1]
-            nomenclature["noms"] = old_nomenclature[2]
-            nomenclatures.append(nomenclature)
-        motif["nomenclatures"] = nomenclatures
-
-        # (motif_id, motif_stat, nomenclatures, m_list1, m_list2)
-        modules = []
-        for old_module in old_motif[4]:
-            module = {}
-            module["module_id"] = old_module[0]
-            module["id"] = old_module[1]
-            module["sequence"] = old_module[2]
-
-            nomenclatures = []
-            for old_nomenclature in old_module[3]:
-                nomenclature = {}
-                nomenclature["count"] = old_nomenclature[0]
-                nomenclature["location"] = old_nomenclature[1]
-                nomenclature["noms"] = old_nomenclature[2]
-                nomenclatures.append(nomenclature)
-            module["nomenclatures"] = nomenclatures
-
-            module["allele_1"] = old_module[4]
-            module["allele_2"] = old_module[5]
-            module["stats"] = old_module[6]
-            module["raw_conf"] = old_module[7]
-            module["reads_spanning"] = old_module[8]
-            module["reads_flanking"] = old_module[9]
-            module["graph_data"] = old_module[10]
-            modules.append(module)
-
-        motif["modules"] = modules
-
-        modules = []
-        for old_phasing in old_motif[5]:
-            module = {}
-            module["module_id"] = old_phasing[0]
-            module["ids"] = old_phasing[1]
-            module["sequence"] = old_phasing[2]
-
-            nomenclatures = []
-            for old_nomenclature in old_phasing[3]:
-                nomenclature = {}
-                nomenclature["count"] = old_nomenclature[0]
-                nomenclature["location"] = old_nomenclature[1]
-                nomenclature["noms"] = old_nomenclature[2]
-                nomenclatures.append(nomenclature)
-            module["nomenclatures"] = nomenclatures
-
-            module["allele_1"] = old_phasing[4]
-            module["allele_2"] = old_phasing[5]
-            module["stats"] = old_phasing[6]
-            module["raw_conf"] = old_phasing[7]
-            module["reads_spanning"] = old_phasing[8]
-            module["reads_flanking"] = old_phasing[9]
-            module["graph_data"] = old_phasing[10]
-            modules.append(module)
-
-        motif["phasings"] = modules
-        motifs.append(motif)
-    data["motifs"] = motifs
-    return data
 
 
 def generate_nomenclatures(

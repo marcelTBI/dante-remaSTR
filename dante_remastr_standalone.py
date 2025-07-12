@@ -112,7 +112,8 @@ def main() -> None:
     write_phased_predictions(all_motifs, all_genotypes, all_haplotypes, args.output_dir + "/phased_predictions.tsv")
 
     if args.verbose:
-        script_dir = os.path.dirname(sys.argv[0]) + "/templates"
+        # script_dir = os.path.dirname(sys.argv[0]) + "/templates"
+        script_dir = args.template_dir + "/templates"  # but now it is less robust when calling from other places
 
         print(f'Writing alignment htmls: {datetime.now():%Y-%m-%d %H:%M:%S}')
         for (motif, genotype, phasing) in zip(all_motifs, all_genotypes, all_haplotypes):
@@ -137,15 +138,16 @@ def main() -> None:
         with open(f"{args.output_dir}/report.html", "w") as f:
             f.write(output)
 
-        copy_includes(args.output_dir)
+        copy_includes(args.template_dir, args.output_dir)
 
     end_time = datetime.now()
     print(f'DANTE_remaSTR Stopping : {end_time:%Y-%m-%d %H:%M:%S}')
     print(f'Total time of run      : {end_time - start_time}')
 
 
-def copy_includes(output_dir: str) -> None:
-    include_dir = os.path.dirname(sys.argv[0]) + "/includes"
+def copy_includes(template_dir: str, output_dir: str) -> None:
+    # include_dir = os.path.dirname(sys.argv[0]) + "/includes"
+    include_dir = template_dir + "/includes"
     os.makedirs(f'{output_dir}/includes', exist_ok=True)
     shutil.copy2(f'{include_dir}/msa.min.gz.js',            f'{output_dir}/includes/msa.min.gz.js')
     shutil.copy2(f'{include_dir}/plotly-2.14.0.min.js',     f'{output_dir}/includes/plotly-2.14.0.min.js')
@@ -173,6 +175,7 @@ def create_histograms(data: dict, output_dir: str) -> None:
             x = np.arange(n)
 
             fig, ax = plt.subplots()
+            ax.tick_params(axis='x', which='major', labelsize=16 - len(total) // 5)
             ax.bar(x, total[:n], width=0.9, label="Flanking", color='lightgrey')
             for i, height in enumerate(total[:n]):
                 if flanking[i] > 0:
@@ -189,7 +192,7 @@ def create_histograms(data: dict, output_dir: str) -> None:
 
             nonzero_indices = [i for i, v in enumerate(total[:n]) if v > 0]
             ax.set_xticks(nonzero_indices)
-            ax.set_xticklabels([str(i) for i in nonzero_indices])
+            ax.set_xticklabels([str(i) for i in nonzero_indices], rotation=90)
             ax.set_title(title)
 
             ax.legend()
@@ -777,6 +780,10 @@ def load_arguments() -> Namespace:
     options.add_argument(
         '--output-dir', '-o', type=str, default="dante_out",
         help='Output destination (directory). Default=./dante_out/'
+    )
+    options.add_argument(
+        '--template-dir', '-t', type=str, default=".",
+        help="Where templates/report_template.html and includes/ are."
     )
     options.add_argument(
         '--verbose', '-v', action='store_true',
