@@ -99,7 +99,7 @@ def generate_result_line(
     indels_rel = mismatches_rel = '---'
     indels_rel1 = mismatches_rel1 = '---'
     indels_rel2 = mismatches_rel2 = '---'
-    if qual_annot is not None:
+    if qual_annot is not None and flank_annot is not None:
         # get info about number of reads
         a1 = int(predicted[0]) if isinstance(predicted[0], int) else None
         a2 = int(predicted[1]) if isinstance(predicted[1], int) else None
@@ -121,21 +121,50 @@ def generate_result_line(
         indels_rel1, mismatches_rel1 = errors_per_read(errors_a1, relative=True)
         indels_rel2, mismatches_rel2 = errors_per_read(errors_a2, relative=True)
 
-    # return dictionary
+    # Count reads and return them
+    count_qual = [0] * 51
+    count_flank = [0] * 51
+    if qual_annot is not None and flank_annot is not None:
+        for a in qual_annot:
+            count_qual[min(a.module_repetitions[module_number], len(count_qual) - 1)] += 1
+        for a in flank_annot:
+            count_flank[min(a.module_repetitions[module_number], len(count_qual) - 1)] += 1
+        read_counts = {f'reads_{i:02d}': f'{cq}+{cf}' for i, (cq, cf) in enumerate(zip(count_qual, count_flank))}
+    else:
+        read_counts = {f'reads_{i:02d}': '---+---' for i, _ in enumerate(zip(count_qual, count_flank))}
+
+    # Return combined dictionary
     return {
-        'motif_name': motif_class.name, 'motif_nomenclature': motif_class.motif, 'motif_sequence': motif_seq,
-        'chromosome': motif_class.chrom, 'start': start, 'end': end, 'allele1': predicted[0],
-        'allele2': predicted[1], 'confidence': confidence[0], 'conf_allele1': confidence[1],
-        'conf_allele2': confidence[2], 'reads_a1': reads_a1, 'reads_a2': reads_a2, 'reads_flank_a1': reads_flank_a1,
-        'reads_flank_a2': reads_flank_a2, 'indels': indels_rel,
-        'mismatches': mismatches_rel, 'indels_a1': indels_rel1, 'indels_a2': indels_rel2,
-        'mismatches_a1': mismatches_rel1, 'mismatches_a2': mismatches_rel2, 'quality_reads': qual_num,
-        'one_primer_reads': primer_num, 'filtered_reads': filt_num,
+        'motif_name': motif_class.name,
+        'motif_nomenclature': motif_class.motif,
+        'motif_sequence': motif_seq,
+        'chromosome': motif_class.chrom,
+        'start': start,
+        'end': end,
+        'allele1': predicted[0],
+        'allele2': predicted[1],
+        'confidence': confidence[0],
+        'conf_allele1': confidence[1],
+        'conf_allele2': confidence[2],
+        'reads_a1': reads_a1,
+        'reads_a2': reads_a2,
+        'reads_flank_a1': reads_flank_a1,
+        'reads_flank_a2': reads_flank_a2,
+        'indels': indels_rel,
+        'mismatches': mismatches_rel,
+        'indels_a1': indels_rel1,
+        'indels_a2': indels_rel2,
+        'mismatches_a1': mismatches_rel1,
+        'mismatches_a2': mismatches_rel2,
+        'quality_reads': qual_num,
+        'one_primer_reads': primer_num,
+        'filtered_reads': filt_num,
         'conf_background': confidence[3] if len(confidence) > 3 else '---',
         'conf_background_all': confidence[4] if len(confidence) > 4 else '---',
         'conf_extended': confidence[5] if len(confidence) > 5 else '---',
         'conf_extended_all': confidence[6] if len(confidence) > 6 else '---',
-        'repetition_index': module_number if second_module_number is None else f'{module_number}_{second_module_number}'
+        'repetition_index': module_number if second_module_number is None else f'{module_number}_{second_module_number}',
+        **read_counts  # Combine the read_counts dictionary into the final return
     }
 
 

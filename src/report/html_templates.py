@@ -524,7 +524,7 @@ def generate_motifb64(sequence: str, result: pd.Series, repetition: str, pcolor:
         return (content_string.format(motif_name=motif_clean.rsplit('_', 1)[0], motif=motif),
                 motif_template.format(post_bases=postfilter.min_rep_len, post_reps=postfilter.min_rep_cnt, motif_name=motif_clean_id,
                                       motif_id=motif_clean.rsplit('_', 1)[0], motif=motif, motif_reps=reps, result=result, motif_pcolor=pcol,
-                                      alignment=f'{motif_name.replace(" ", "%20")}/alignments.html', sequence=sequence, errors=errors,
+                                      alignment=f'{motif.replace(" ", "%20")}/alignments.html', sequence=sequence, errors=errors,
                                       nomenclatures='\n'.join(nomenclature_lines)),
                 (motif, alignment_string.format(sequence=sequence, alignment=align_html + align_html_a1 + align_html_a2 +
                                                                              filt_align_html + left_align_html + right_align_html)))
