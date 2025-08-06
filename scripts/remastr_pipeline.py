@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import glob
 import os
 import re
@@ -38,6 +39,7 @@ def load_arguments() -> argparse.Namespace:
     parser.add_argument('--additional-bams', help='More glob paths to bam file(s) to process.', nargs='*', default=[])
     parser.add_argument('--regex-bam', help='Regex for basename of bam files for finer control. Default=\'^[^.]+\\.[^.]+$\' (all with one dot)',
                         default=r'^[^.]+\.[^.]+$')
+    parser.add_argument('--gzipped', action='store_true', help='Work with gzipped remastr output.')
 
     # preprocessing
     parser.add_argument('--flank-len', '-f', type=int, help='Flank length to include into HMM (remastr). Default=30', default=30)
@@ -74,9 +76,14 @@ def run_command(command: str, exit_on_error: bool, skip_call: bool) -> None:
     :param exit_on_error: bool - whether to exit on error
     :param skip_call: bool - dry run? do not call the command
     """
+    start_time = datetime.datetime.now()
+    print(f'#Start of a command: {start_time}')
     print(command)
     if not skip_call:
         return_code = subprocess.call(command, shell=True)
+        end_time = datetime.datetime.now()
+        print(f'#End   of a command: {end_time}')
+        print(f'#Time elapsed      : {end_time - start_time}')
         if exit_on_error and return_code != 0:
             exit(return_code)
 
@@ -124,24 +131,34 @@ if __name__ == '__main__':
         # go through all nomenclature names
         for nomenclature_file, nomenclature_name in zip(nomenclatures, nomenclature_names):
             output_dir = args.output_dir if args.skip_subpath else f'{args.output_dir}/{nomenclature_name}/{sample_name}'
+            output_file = f'{output_dir}/{sample_name}.tsv'
 
             # build remastr call
             remastr_params = '--flank 30 --quality 0' if args.use_old_defaults else (f'--flank {args.flank_len} --quality {args.min_mapq}' +
                                                                                      (' -d' if not args.include_duplicates else ''))
             remastr_params += ' ' + args.remastr_args
             remastr_call = (f'{args.dante_repo}/remastr/target/release/dante_cli -f {args.reference_fasta} -m {nomenclature_file} '
-                            f'-b {bam_file} -o {output_dir}/{sample_name}.tsv {remastr_params}')
+                            f'-b {bam_file} -o {output_file} {remastr_params}')
+
+            # gzip results?
+            gzip_call = ''
+            if args.gzipped:
+                gzip_call = f'gzip {output_file}'
+                output_file += '.gz'
 
             # build dante_remastr call (report)
             additional_params = ' --processes 10 --min-flank-len 5 --min-rep-len 6 --min-rep-cnt 2 --max-rel-error 0.05' if args.use_old_defaults else ''
-            additional_params += ' ' + args.dante_args + (' -v' if args.visualize else '') + (' --male' if male_sample else '')
+            additional_params += (' ' + args.dante_args + (' -v' if args.visualize else '') + (' --male' if male_sample else '') +
+                                  (' --input-gzipped' if args.gzipped else ''))
             dante_call = (f'python {args.dante_repo}/dante_remastr.py --param-file {args.param_file}{additional_params} -o {output_dir} < '
-                          f'{output_dir}/{sample_name}.tsv > {output_dir}/{sample_name}_res.tsv')
+                          f'{output_file} > {output_dir}/{sample_name}_res.tsv')
 
             # print and call commands
             if not args.skip_call:
                 os.makedirs(output_dir, exist_ok=True)
             run_command(remastr_call, not args.ignore_errors, args.skip_call or args.skip_remastr)
+            if args.gzipped:
+                run_command(gzip_call, not args.ignore_errors, args.skip_call or args.skip_remastr)
             run_command(dante_call, not args.ignore_errors, args.skip_call)
 
         # remove temporary bam
