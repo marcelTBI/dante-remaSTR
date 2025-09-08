@@ -358,9 +358,11 @@ def get_phased_sequence(motif: Motif, genotype: list[GenotypeInfo], phasing: lis
     result = {
         "motif_name": motif.name,
         "nomenclature1": aug_nom1,
+        "nomenclature1_occ": h1_full,
         "nomenclature1_len": nom1_len,
         "errors1": err1 + errs1,
         "nomenclature2": aug_nom2,
+        "nomenclature2_occ": h2_full,
         "nomenclature2_len": nom2_len,
         "errors2": err2 + errs2
     }
@@ -2147,7 +2149,8 @@ class Inference:
     MIN_REPETITIONS = 1
     # default parameters for inference (miSeq default)
     # DEFAULT_MODEL_PARAMS = (0.00716322, 0.000105087, 0.0210812, 0.0001648)
-    DEFAULT_MODEL_PARAMS = (0.00716322, 0.000105087, 0.0210812, 0.00716322)  # it actually changes things
+    # DEFAULT_MODEL_PARAMS = (0.00716322, 0.000105087, 0.0210812, 0.00716322)  # it actually changes things
+    DEFAULT_MODEL_PARAMS = (0.001, 0.000105087, 0.0210812, 0.001)  # it actually changes things
     DEFAULT_FIT_FUNCTION = 'linear'
 
     # TODO: type the members
